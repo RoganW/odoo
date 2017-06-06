@@ -98,6 +98,8 @@ class PosConfig(models.Model):
         help='The point of sale will display this product category by default. If no category is specified, all available products will be shown')
     iface_display_categ_images = fields.Boolean(string='Display Category Pictures',
         help="The product categories will be displayed with pictures.")
+    restrict_price_control = fields.Boolean(string='Restrict Price Modifications to Managers',
+        help="Check to box to restrict the price control to managers only on point of sale orders.")
     cash_control = fields.Boolean(string='Cash Control', help="Check the amount of the cashbox at opening and closing.")
     receipt_header = fields.Text(string='Receipt Header', help="A short text that will be inserted as a header in the printed receipt")
     receipt_footer = fields.Text(string='Receipt Footer', help="A short text that will be inserted as a footer in the printed receipt")
@@ -245,7 +247,8 @@ class PosConfig(models.Model):
     # Methods to open the POS
     @api.multi
     def open_ui(self):
-        assert len(self.ids) == 1, "you can open only one session at a time"
+        """ open the pos interface """
+        self.ensure_one()
         return {
             'type': 'ir.actions.act_url',
             'url':   '/pos/web/',
@@ -253,15 +256,13 @@ class PosConfig(models.Model):
         }
 
     @api.multi
-    def open_existing_session_cb_close(self):
-        assert len(self.ids) == 1, "you can open only one session at a time"
-        if self.current_session_id.cash_control:
-            self.current_session_id.action_pos_session_closing_control()
-        return self.open_session_cb()
-
-    @api.multi
     def open_session_cb(self):
-        assert len(self.ids) == 1, "you can open only one session at a time"
+        """ new session button
+
+        create one if none exist
+        access cash control interface if enabled or start a session
+        """
+        self.ensure_one()
         if not self.current_session_id:
             self.current_session_id = self.env['pos.session'].create({
                 'user_id': self.env.uid,
@@ -274,7 +275,11 @@ class PosConfig(models.Model):
 
     @api.multi
     def open_existing_session_cb(self):
-        assert len(self.ids) == 1, "you can open only one session at a time"
+        """ close session button
+
+        access session form to validate entries
+        """
+        self.ensure_one()
         return self._open_session(self.current_session_id.id)
 
     def _open_session(self, session_id):

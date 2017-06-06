@@ -6,7 +6,7 @@ from psycopg2 import OperationalError
 from odoo import api, fields, models, registry, _
 from odoo.exceptions import UserError
 
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 
 PROCUREMENT_PRIORITIES = [('0', 'Not urgent'), ('1', 'Normal'), ('2', 'Urgent'), ('3', 'Very Urgent')]
 
@@ -289,12 +289,11 @@ class ProcurementOrder(models.Model):
             This is appropriate for batch jobs only.
         @return:  Dictionary of values
         '''
-        ProcurementSudo = self.env['procurement.order'].sudo()
         try:
             if use_new_cursor:
                 cr = registry(self._cr.dbname).cursor()
                 self = self.with_env(self.env(cr=cr))  # TDE FIXME
-
+            ProcurementSudo = self.env['procurement.order'].sudo()
             # Run confirmed procurements
             procurements = ProcurementSudo.search([('state', '=', 'confirmed')] + (company_id and [('company_id', '=', company_id)] or []))
             while procurements:

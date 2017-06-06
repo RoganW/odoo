@@ -30,12 +30,10 @@ You can define the different phases of interviews and easily rate the applicant 
         'security/ir.model.access.csv',
         'data/hr_recruitment_data.xml',
         'views/hr_recruitment_views.xml',
-        'report/hr_recruitment_report_views.xml',
         'views/hr_recruitment_config_settings_views.xml',
         'views/hr_recruitment_templates.xml',
         'views/hr_department_views.xml',
         'views/hr_job_views.xml',
-        'views/tour_views.xml',
     ],
     'demo': [
         'data/hr_recruitment_demo.xml',

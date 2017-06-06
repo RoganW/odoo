@@ -65,6 +65,50 @@
             </field>
         </record>
 
+        <record id="view_mail_mass_mailing_contact_kanban" model="ir.ui.view">
+            <field name="name">mail.mass_mailing.contact.kanban</field>
+            <field name="model">mail.mass_mailing.contact</field>
+            <field name="arch" type="xml">
+                <kanban>
+                    <field name="name"/>
+                    <field name="company_name"/>
+                    <field name="email"/>
+                    <field name="message_bounce"/>
+                    <templates>
+                        <t t-name="kanban-box">
+                            <div t-attf-class="oe_kanban_global_click">
+                                <div>
+                                    <field name="tag_ids"/>
+                                </div>
+                                <div class="row">
+                                    <div class="col-xs-8">
+                                        <strong>
+                                            <t t-esc="record.name.value"/>
+                                        </strong>
+                                    </div>
+                                    <div class="col-xs-4">
+                                        <span class="badge pull-right" title="Number of bounced email.">
+                                            <i class="fa fa-exclamation-triangle"/> <t t-esc="record.message_bounce.value" title=""/>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-xs-6">
+                                        <strong>
+                                            <t t-esc="record.email.value"/>
+                                        </strong>
+                                    </div>
+                                    <div class="col-xs-6">
+                                        <t t-esc="record.company_name.value"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
         <record model="ir.ui.view" id="view_mail_mass_mailing_contact_form">
             <field name="name">mail.mass_mailing.contact.form</field>
             <field name="model">mail.mass_mailing.contact</field>
@@ -132,7 +176,7 @@
             <field name="name">Contacts</field>
             <field name="res_model">mail.mass_mailing.contact</field>
             <field name="view_type">form</field>
-            <field name="view_mode">tree,form,graph,pivot</field>
+            <field name="view_mode">tree,kanban,form,graph,pivot</field>
             <field name="context">{'search_default_not_opt_out': 1}</field>
         </record>
 
@@ -184,6 +228,30 @@
             </field>
         </record>
 
+        <record id="view_mail_mass_mailing_list_kanban" model="ir.ui.view">
+            <field name="name">mail.mass_mailing.list.kanban</field>
+            <field name="model">mail.mass_mailing.list</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_mobile">
+                    <field name="name"/>
+                    <field name="contact_nbr"/>
+                    <templates>
+                        <t t-name="kanban-box">
+                            <div t-attf-class="oe_kanban_global_click">
+                                <div>
+                                    <strong><t t-esc="record.name.value"/></strong>
+                                    <span class="pull-right badge">
+                                        <i class="fa fa-user"/>
+                                        <t t-esc="record.contact_nbr.value"/>
+                                    </span>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
         <record model="ir.ui.view" id="view_mail_mass_mailing_list_form">
             <field name="name">mail.mass_mailing.list.form</field>
             <field name="model">mail.mass_mailing.list</field>
@@ -216,7 +284,7 @@
             <field name="name">Mailing Lists</field>
             <field name="res_model">mail.mass_mailing.list</field>
             <field name="view_type">form</field>
-            <field name="view_mode">tree,form</field>
+            <field name="view_mode">tree,kanban,form</field>
             <field name="help" type="html">
                 <p class="oe_view_nocontent_create">
                     Click here to create a new mailing list.
@@ -242,10 +310,10 @@
                     <group expand="0" string="Group By">
                         <filter string="Status" name="group_state"
                             context="{'group_by': 'state'}"/>
-                        <filter string="Sent By" domain="[]"
+                        <filter string="Sent By" name="sent_by" domain="[]"
                             context="{'group_by':'email_from'}"/>
                         <separator/>
-                        <filter string="Sent Month"
+                        <filter string="Sent Month" name="sent_month"
                             domain="[]" context="{'group_by':'sent_date:month'}"/>
                     </group>
                 </search>
@@ -585,7 +653,7 @@
 
         <menuitem name="Campaign Stages" id="menu_view_mass_mailing_stages"
             parent="menu_mass_mailing_configuration" sequence="1"
-            groups="mass_mailing.group_mass_mailing_campaign"
+            groups="base.group_no_one,mass_mailing.group_mass_mailing_campaign"
             action="action_view_mass_mailing_stages"/>
 
         <!--  MASS MAILING CAMPAIGN TAGS !-->
@@ -791,19 +859,6 @@
     Create a campaign to structure mass mailing and get analysis from email status.
   </p>
 </field>
-        </record>
-
-        <!-- Cron that process the mass mailing queue -->
-        <record id="ir_cron_mass_mailing_queue" model="ir.cron">
-            <field name="name">Mass Mailing: Process queue</field>
-            <field name="model_id" ref="model_mail_mass_mailing"/>
-            <field name="state">code</field>
-            <field name="code">model._process_mass_mailing_queue()</field>
-            <field name="user_id" ref="base.user_root" />
-            <field name="interval_number">60</field>
-            <field name="interval_type">minutes</field>
-            <field name="numbercall">-1</field>
-            <field eval="False" name="doall" />
         </record>
 
         <menuitem name="Campaigns" id="menu_email_campaigns"

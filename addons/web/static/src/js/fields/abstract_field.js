@@ -34,9 +34,11 @@ var field_utils = require('web.field_utils');
 var Widget = require('web.Widget');
 
 var AbstractField = Widget.extend({
-    className: 'o_field_widget',
     events: {
         'keydown': '_onKeydown',
+    },
+    custom_events: {
+        navigation_move: '_onNavigationMove',
     },
     /**
      * If this flag is set to true, the field widget will be reset on every
@@ -88,7 +90,7 @@ var AbstractField = Widget.extend({
         // the 'attrs' property contains the attributes of the xml 'field' tag,
         // the inner views...
         var fieldsInfo = record.fieldsInfo[this.viewType];
-        this.attrs = fieldsInfo && fieldsInfo[name] || {};
+        this.attrs = options.attrs || (fieldsInfo && fieldsInfo[name]) || {};
 
         // this property tracks the current (parsed if needed) value of the field.
         // Note that we don't use an event system anymore, using this.get('value')
@@ -151,6 +153,7 @@ var AbstractField = Widget.extend({
         var self = this;
         return this._super.apply(this, arguments).then(function () {
             self.$el.attr('name', self.name);
+            self.$el.addClass('o_field_widget');
             return self._render();
         });
     },
@@ -165,19 +168,21 @@ var AbstractField = Widget.extend({
      * part can be disabled.  In that case, note that the focused input/textarea
      * will have the cursor at the very end.
      *
-     * @param {boolean} [noselect=false] if false and the input is of type text
-     *   or textarea, the content will also be selected
+     * @param {Object} [options]
+     * @param {boolean} [noselect=false] if false and the input
+     *   is of type text or textarea, the content will also be selected
+     * @param {Event} [options.event] the event which fired this activation
      * @returns {boolean} true if the widget was activated, false if the
      *                    focusable element was not found or invisible
      */
-    activate: function (noselect) {
+    activate: function (options) {
         var $focusable = this.getFocusableElement();
         if ($focusable.length && $focusable.is(':visible')) {
             $focusable.focus();
             if ($focusable.is('input[type="text"], textarea')) {
                 $focusable[0].selectionStart = $focusable[0].selectionEnd = $focusable[0].value.length;
-                if (!noselect) {
-                    setTimeout($focusable.select.bind($focusable), 0);
+                if (options && !options.noselect) {
+                    $focusable.select();
                 }
             }
             return true;
@@ -187,13 +192,16 @@ var AbstractField = Widget.extend({
     /**
      * This function should be implemented by widgets that are not able to
      * notify their environment when their value changes (maybe because their
-     * are not aware of the changes). It is called before saving, and should
-     * call _setValue() to notify the environment if the value changed.
+     * are not aware of the changes) or that may have a value in a temporary
+     * state (maybe because some action should be performed to validate it
+     * before notifying it). This is typically called before trying to save the
+     * widget's value, so it should call _setValue() to notify the environment
+     * if the value changed but was not notified.
      *
      * @abstract
+     * @returns {Deferred|undefined}
      */
-    commitChanges: function () {
-    },
+    commitChanges: function () {},
     /**
      * Returns the main field's DOM element (jQuery form) which can be focused
      * by the browser.
@@ -217,16 +225,10 @@ var AbstractField = Widget.extend({
      * value was changed by the user. This is checked before saving a record, by
      * the view.
      *
-     * Note: the return value may not be a boolean. It is necessary for some
-     * fields (x2many) to sometimes ask confirmation to the user if the current
-     * dirty invalid line can be discarded. This is an asynchronous operation,
-     * so we need the expressivity of something like a deferred.
-     *
-     * Note2: this is the responsability of the view to check that required
+     * Note: this is the responsability of the view to check that required
      * fields have a set value.
      *
-     * @returns {boolean|Deferred} true/false if the widget is valid, or a
-     *   deferred which resolves to true/false if the widget is valid or not
+     * @returns {boolean} true/false if the widget is valid
      */
     isValid: function () {
         return this._isValid;
@@ -264,6 +266,20 @@ var AbstractField = Widget.extend({
     _formatValue: function (value) {
         var options = _.extend({}, this.nodeOptions, { data: this.recordData });
         return field_utils.format[this.field.type](value, this.field, options);
+    },
+    /**
+     * This method check if a value is the same as the current value of the
+     * field.  For example, a fieldDate widget might want to use the moment
+     * specific value isSame instead of ===.
+     *
+     * This method is used by the _setValue method.
+     *
+     * @private
+     * @param {any} value
+     * @returns {boolean}
+     */
+    _isSameValue: function (value) {
+        return this.value === value;
     },
     /**
      * convert a string representation to a valid value, depending on the field
@@ -332,11 +348,14 @@ var AbstractField = Widget.extend({
      *
      * @private
      * @param {any} value
+     * @param {Object} [options]
+     * @param {boolean} [options.forceChange=false] if true, the change event will be
+     *   triggered even if the new value is the same as the old one
      */
-    _setValue: function (value) {
+    _setValue: function (value, options) {
         // we try to avoid doing useless work, if the value given has not
         // changed.  Note that we compare the unparsed values.
-        if (this.lastSetValue === value || (value !== false && value === this.value)) {
+        if (this.lastSetValue === value || (this.value === false && value === '')) {
             return;
         }
         this.lastSetValue = value;
@@ -347,11 +366,15 @@ var AbstractField = Widget.extend({
             this._isValid = false;
             return;
         }
+        if (!(options && options.forceChange) && this._isSameValue(value)) {
+            return;
+        }
         var changes = {};
         changes[this.name] = value;
         this.trigger_up('field_changed', {
             dataPointID: this.dataPointID,
             changes: changes,
+            viewType: this.viewType,
         });
     },
 
@@ -360,20 +383,66 @@ var AbstractField = Widget.extend({
     //--------------------------------------------------------------------------
 
     /**
-     * might be controversial: intercept the tab key, to allow the editable list
-     * view to control where the focus is.
+     * Intercepts navigation keyboard events to prevent their default behavior
+     * and notifies the view so that it can handle it its own way.
+     *
+     * Note: the navigation keyboard events are stopped so that potential parent
+     * abstract field does not trigger the navigation_move event a second time.
+     * However, this might be controversial, we might wanna let the event
+     * continue its propagation and flag it to say that navigation has already
+     * been handled (TODO ?).
      *
      * @private
-     * @param {KeyEvent} event
+     * @param {KeyEvent} ev
      */
-    _onKeydown: function (event) {
-        if (event.which === $.ui.keyCode.TAB) {
-            // the event needs to be stopped, to prevent other field widgets
-            // to retrigger a move event
-            event.stopPropagation();
-            this.trigger_up(event.shiftKey ? 'move_previous' : 'move_next');
-            event.preventDefault();
+    _onKeydown: function (ev) {
+        switch (ev.which) {
+            case $.ui.keyCode.TAB:
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.trigger_up('navigation_move', {
+                    direction: ev.shiftKey ? 'previous' : 'next',
+                });
+                break;
+            case $.ui.keyCode.ENTER:
+                ev.stopPropagation();
+                this.trigger_up('navigation_move', {direction: 'next_line'});
+                break;
+            case $.ui.keyCode.ESCAPE:
+                this.trigger_up('navigation_move', {direction: 'cancel'});
+                break;
+            case $.ui.keyCode.UP:
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.trigger_up('navigation_move', {direction: 'up'});
+                break;
+            case $.ui.keyCode.RIGHT:
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.trigger_up('navigation_move', {direction: 'right'});
+                break;
+            case $.ui.keyCode.DOWN:
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.trigger_up('navigation_move', {direction: 'down'});
+                break;
+            case $.ui.keyCode.LEFT:
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.trigger_up('navigation_move', {direction: 'left'});
+                break;
         }
+    },
+    /**
+     * Updates the target data value with the current AbstractField instance.
+     * This allows to consider the parent field in case of nested fields. The
+     * field which triggered the event is still accessible through ev.target.
+     *
+     * @private
+     * @param {OdooEvent} ev
+     */
+    _onNavigationMove: function (ev) {
+        ev.data.target = this;
     },
 });
 

@@ -3,7 +3,7 @@
 
 from odoo import api, fields, models
 from odoo.tools.translate import html_translate
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 
 
 class SaleQuoteTemplate(models.Model):
@@ -22,7 +22,9 @@ class SaleQuoteTemplate(models.Model):
         (1, 'Immediate after website order validation'),
         (2, 'Immediate after website order validation and save a token'),
     ], 'Payment', help="Require immediate payment by the customer when validating the order from the website quote")
-    mail_template_id = fields.Many2one('mail.template', 'Confirmation Mail',
+    mail_template_id = fields.Many2one(
+        'mail.template', 'Confirmation Mail',
+        domain=[('model', '=', 'sale.order')],
         help="This e-mail template will be sent on confirmation. Leave empty to send nothing.")
 
     @api.multi

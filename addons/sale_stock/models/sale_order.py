@@ -72,7 +72,6 @@ class SaleOrder(models.Model):
         invoice_vals['incoterms_id'] = self.incoterm.id or False
         return invoice_vals
 
-    @api.model
     def _prepare_procurement_group(self):
         res = super(SaleOrder, self)._prepare_procurement_group()
         res.update({'move_type': self.picking_policy, 'partner_id': self.partner_shipping_id.id, 'sale_order_id': self.id})
@@ -87,7 +86,7 @@ class SaleOrder(models.Model):
 class SaleOrderLine(models.Model):
     _inherit = 'sale.order.line'
 
-    product_packaging = fields.Many2one('product.packaging', string='Packaging', default=False)
+    product_packaging = fields.Many2one('product.packaging', string='Package', default=False)
     route_id = fields.Many2one('stock.location.route', string='Route', domain=[('sale_selectable', '=', True)], ondelete='restrict')
 
     @api.depends('order_id.state')

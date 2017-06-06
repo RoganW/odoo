@@ -1,6 +1,7 @@
 odoo.define('web.special_fields_tests', function (require) {
 "use strict";
 
+var FormView = require('web.FormView');
 var ListView = require('web.ListView');
 var testUtils = require('web.test_utils');
 
@@ -141,17 +142,28 @@ QUnit.module('special_fields', {
     QUnit.module('FieldTimezoneMismatch');
 
     QUnit.test('widget timezone_mismatch in a list view', function (assert) {
-        assert.expect(3);
+        assert.expect(5);
 
+        this.data.partner.fields.tz_offset = {
+            string: "tz_offset",
+            type: "char"
+        };
         this.data.partner.records.forEach(function (r) {
             r.color = 'red';
+            r.tz_offset = 0;
         });
+        this.data.partner.onchanges = {
+            color: function (r) {
+                r.tz_offset = '+4800'; // make sur we have a mismatch
+            }
+        };
 
         var list = createView({
             View: ListView,
             model: 'partner',
             data: this.data,
             arch: '<tree string="Colors" editable="top">' +
+                        '<field name="tz_offset" invisible="True"/>' +
                         '<field name="color" widget="timezone_mismatch"/>' +
                 '</tree>',
         });
@@ -164,7 +176,41 @@ QUnit.module('special_fields', {
 
         assert.strictEqual($td.find('select').length, 1, "td should have a child 'select'");
         assert.strictEqual($td.contents().length, 1, "select tag should be only child of td");
+
+        $td.find('select').val('"black"').trigger('change');
+
+        assert.strictEqual($td.find('.o_tz_warning').length, 1, "Should display icon alert");
+        assert.ok($td.find('select option:selected').text().match(/Black\s+\([0-9]+\/[0-9]+\/[0-9]+ [0-9]+:[0-9]+:[0-9]+\)/), "Should display the datetime in the selected timezone");
         list.destroy();
+    });
+
+    QUnit.test('widget timezone_mismatch in a form view', function (assert) {
+        assert.expect(1);
+
+        this.data.partner.fields.tz_offset = {
+            string: "tz_offset",
+            type: "char"
+        };
+        this.data.partner.fields.tz = {
+            type: "selection",
+            selection: [['Europe/Brussels', "Europe/Brussels"], ['America/Los_Angeles', "America/Los_Angeles"]],
+        };
+        this.data.partner.records[0].tz = false;
+        this.data.partner.records[0].tz_offset = '+4800';
+
+        var form = createView({
+            View: FormView,
+            model: 'partner',
+            res_id: 1,
+            data: this.data,
+            arch: '<form>' +
+                    '<field name="tz_offset" invisible="True"/>' +
+                    '<field name="tz" widget="timezone_mismatch"/>' +
+                '</form>',
+        });
+        form.$buttons.find('.o_form_button_edit').click();
+        assert.strictEqual(form.$('select').length, 1, "should have the select field");
+        form.destroy();
     });
 
 });

@@ -115,7 +115,7 @@
             <sheet>
                 <div class="oe_button_box" name="button_box">
                     <button class="oe_stat_button" name="action_see_move_scrap" type="object" icon="fa-arrows-v" attrs="{'invisible': [('scrap_count', '=', 0)]}">
-                        <div class="o_form_field o_stat_info">
+                        <div class="o_field_widget o_stat_info">
                             <span class="o_stat_value"><field name="scrap_count"/></span>
                             <span class="o_stat_text">Scraps</span>
                         </div>
@@ -197,7 +197,7 @@
                         </group>
                     </group>
                     <group>
-                        <field name="time_ids" readonly="1" nolabel="1">
+                        <field name="time_ids" nolabel="1">
                             <tree>
                                 <field name="date_start"/>
                                 <field name="date_end"/>
@@ -252,17 +252,17 @@
                 <filter string="Ready" name="ready" domain="[('state','=','ready')]"/>
                 <filter string="Pending" name="pending" domain="[('state','=','pending')]"/>
                 <filter string="Finished" name="finish" domain="[('state','=','done')]"/>
-                <filter string="Available" domain="[('production_availability','=', 'assigned')]"/>
+                <filter string="Available" name="available" domain="[('production_availability','=', 'assigned')]"/>
                 <separator/>
-                <filter string="Late" domain="['&amp;', ('date_planned_start','&lt;', current_date), ('state', '=', 'ready')]"
+                <filter string="Late" name="late" domain="['&amp;', ('date_planned_start','&lt;', current_date), ('state', '=', 'ready')]"
                     help="Production started late"/>
                 <field name="workcenter_id"/>
                 <field name="production_id"/>
                 <group expand="0" string="Group By">
-                    <filter string="Work Center" domain="[]" context="{'group_by':'workcenter_id'}"/>
-                    <filter string="Production" domain="[]" context="{'group_by':'production_id'}"/>
-                    <filter string="Status" domain="[]" context="{'group_by':'state'}"/>
-                    <filter string="Scheduled Month" domain="[]" context="{'group_by':'date_planned_start'}" help="Scheduled Date by Month"/>
+                    <filter string="Work Center" name="work_center" domain="[]" context="{'group_by':'workcenter_id'}"/>
+                    <filter string="Production" name="production" domain="[]" context="{'group_by':'production_id'}"/>
+                    <filter string="Status" name="status" domain="[]" context="{'group_by':'state'}"/>
+                    <filter string="Scheduled Month" name="scheduled_month" domain="[]" context="{'group_by':'date_planned_start'}" help="Scheduled Date by Month"/>
                 </group>
              </search>
         </field>
@@ -450,7 +450,7 @@
         <field name="type">ir.actions.act_window</field>
         <field name="res_model">mrp.workorder</field>
         <field name="view_type">form</field>
-        <field name="view_mode">pivot,graph</field>
+        <field name="view_mode">graph,pivot</field>
         <field name="view_id" ref="view_workcenter_load_pivot"/>
     </record>
 

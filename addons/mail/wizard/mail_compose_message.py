@@ -5,6 +5,7 @@ import base64
 import re
 
 from odoo import _, api, fields, models, SUPERUSER_ID, tools
+from odoo.tools import pycompat
 from odoo.tools.safe_eval import safe_eval
 
 
@@ -92,7 +93,7 @@ class MailComposer(models.TransientModel):
             result['res_id'] = self.env.user.partner_id.id
 
         if fields is not None:
-            [result.pop(field, None) for field in result.keys() if field not in fields]
+            [result.pop(field, None) for field in list(result) if field not in fields]
         return result
 
     @api.model
@@ -139,7 +140,7 @@ class MailComposer(models.TransientModel):
             for mid, rmod, rid in self._cr.fetchall():
                 message_values[mid] = {'model': rmod, 'res_id': rid}
             # remove from the set to check the ids that mail_compose_message accepts
-            author_ids = [mid for mid, message in message_values.iteritems()
+            author_ids = [mid for mid, message in pycompat.items(message_values)
                           if message.get('model') and not message.get('res_id')]
             self = self.browse(list(set(self.ids) - set(author_ids)))  # not sure slef = ...
 
@@ -247,7 +248,7 @@ class MailComposer(models.TransientModel):
             for res_ids in sliced_res_ids:
                 batch_mails = Mail
                 all_mail_values = wizard.get_mail_values(res_ids)
-                for res_id, mail_values in all_mail_values.iteritems():
+                for res_id, mail_values in pycompat.items(all_mail_values):
                     if wizard.composition_mode == 'mass_mail':
                         batch_mails |= Mail.create(mail_values)
                     else:
@@ -337,7 +338,7 @@ class MailComposer(models.TransientModel):
     def onchange_template_id_wrapper(self):
         self.ensure_one()
         values = self.onchange_template_id(self.template_id.id, self.composition_mode, self.model, self.res_id)['value']
-        for fname, value in values.iteritems():
+        for fname, value in pycompat.items(values):
             setattr(self, fname, value)
 
     @api.multi
@@ -434,7 +435,7 @@ class MailComposer(models.TransientModel):
         """
         self.ensure_one()
         multi_mode = True
-        if isinstance(res_ids, (int, long)):
+        if isinstance(res_ids, pycompat.integer_types):
             multi_mode = False
             res_ids = [res_ids]
 
@@ -484,7 +485,7 @@ class MailComposer(models.TransientModel):
         """ Call email_template.generate_email(), get fields relevant for
             mail.compose.message, transform email_cc and email_to into partner_ids """
         multi_mode = True
-        if isinstance(res_ids, (int, long)):
+        if isinstance(res_ids, pycompat.integer_types):
             multi_mode = False
             res_ids = [res_ids]
 

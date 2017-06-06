@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from babel.dates import format_datetime, format_date
 
 from odoo import models, api, _, fields
+from odoo.release import version
 from odoo.tools import DEFAULT_SERVER_DATE_FORMAT as DF
 from odoo.tools.misc import formatLang
 
@@ -29,6 +30,16 @@ class account_journal(models.Model):
     def toggle_favorite(self):
         self.write({'show_on_dashboard': False if self.show_on_dashboard else True})
         return False
+
+    def _graph_title_and_key(self):
+        if self.type == 'sale':
+            return ['', _('Sales: Untaxed Total')]
+        elif self.type == 'purchase':
+            return ['', _('Purchase: Untaxed Total')]
+        elif self.type == 'cash':
+            return ['', _('Cash: Balance')]
+        elif self.type == 'bank':
+            return ['', _('Bank: Balance')]
 
     @api.multi
     def get_line_graph_datas(self):
@@ -87,7 +98,9 @@ class account_journal(models.Model):
                 short_name = format_date(show_date, 'd MMM', locale=locale)
                 data.append({'x': short_name, 'y':last_balance, 'name': name})
 
-        return [{'values': data, 'area': True}]
+        [graph_title, graph_key] = self._graph_title_and_key()
+        color = '#875A7B' if '+e' in version else '#7c7bad'
+        return [{'values': data, 'title': graph_title, 'key': graph_key, 'area': True, 'color': color}]
 
     @api.multi
     def get_bar_graph_datas(self):
@@ -130,14 +143,16 @@ class account_journal(models.Model):
             if query_results[index].get('aggr_date') != None:
                 data[index]['value'] = query_results[index].get('total')
 
-        return [{'values': data}]
+        [graph_title, graph_key] = self._graph_title_and_key()
+        return [{'values': data, 'title': graph_title, 'key': graph_key}]
 
     @api.multi
     def get_journal_dashboard_datas(self):
         currency = self.currency_id or self.company_id.currency_id
         number_to_reconcile = last_balance = account_sum = 0
         title = ''
-        number_draft = number_waiting = number_late = sum_draft = sum_waiting = sum_late = 0
+        number_draft = number_waiting = number_late = 0
+        sum_draft = sum_waiting = sum_late = 0.0
         if self.type in ['bank', 'cash']:
             last_bank_stmt = self.env['account.bank.statement'].search([('journal_id', 'in', self.ids)], order="date desc, id desc", limit=1)
             last_balance = last_bank_stmt and last_bank_stmt[0].balance_end or 0
@@ -151,7 +166,7 @@ class account_journal(models.Model):
                         """, (tuple(self.ids),))
             number_to_reconcile = self.env.cr.fetchone()[0]
             # optimization to read sum of balance from account_move_line
-            account_ids = tuple(filter(None, [self.default_debit_account_id.id, self.default_credit_account_id.id]))
+            account_ids = tuple(ac for ac in [self.default_debit_account_id.id, self.default_credit_account_id.id] if ac)
             if account_ids:
                 amount_field = 'balance' if not self.currency_id else 'amount_currency'
                 query = """SELECT sum(%s) FROM account_move_line WHERE account_id in %%s;""" % (amount_field,)
@@ -163,30 +178,33 @@ class account_journal(models.Model):
         elif self.type in ['sale', 'purchase']:
             title = _('Bills to pay') if self.type == 'purchase' else _('Invoices owed to you')
             # optimization to find total and sum of invoice that are in draft, open state
-            query = """SELECT state, amount_total, currency_id AS currency FROM account_invoice WHERE journal_id = %s AND state NOT IN ('paid', 'cancel');"""
+            query = """SELECT state, amount_total, currency_id AS currency, type FROM account_invoice WHERE journal_id = %s AND state NOT IN ('paid', 'cancel');"""
             self.env.cr.execute(query, (self.id,))
             query_results = self.env.cr.dictfetchall()
             today = datetime.today()
-            query = """SELECT amount_total, currency_id AS currency FROM account_invoice WHERE journal_id = %s AND date < %s AND state = 'open';"""
+            query = """SELECT amount_total, currency_id AS currency, type FROM account_invoice WHERE journal_id = %s AND date < %s AND state = 'open';"""
             self.env.cr.execute(query, (self.id, today))
             late_query_results = self.env.cr.dictfetchall()
-            sum_draft = 0.0
-            number_draft = 0
-            number_waiting = 0
             for result in query_results:
+                if result['type'] in ['in_refund', 'out_refund']:
+                    factor = -1
+                else:
+                    factor = 1
                 cur = self.env['res.currency'].browse(result.get('currency'))
                 if result.get('state') == 'draft':
                     number_draft += 1
-                    sum_draft += cur.compute(result.get('amount_total'), currency)
+                    sum_draft += cur.compute(result.get('amount_total'), currency) * factor
                 elif result.get('state') == 'open':
                     number_waiting += 1
-                    sum_waiting += cur.compute(result.get('amount_total'), currency)
-            sum_late = 0.0
-            number_late = 0
+                    sum_waiting += cur.compute(result.get('amount_total'), currency) * factor
             for result in late_query_results:
+                if result['type'] in ['in_refund', 'out_refund']:
+                    factor = -1
+                else:
+                    factor = 1
                 cur = self.env['res.currency'].browse(result.get('currency'))
                 number_late += 1
-                sum_late += cur.compute(result.get('amount_total'), currency)
+                sum_late += cur.compute(result.get('amount_total'), currency) * factor
 
         return {
             'number_to_reconcile': number_to_reconcile,

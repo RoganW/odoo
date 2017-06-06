@@ -6,6 +6,7 @@ import pytz
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
+from odoo.tools import pycompat
 
 _logger = logging.getLogger(__name__)
 
@@ -86,6 +87,22 @@ class IrSequence(models.Model):
     def _set_number_next_actual(self):
         for seq in self:
             seq.write({'number_next': seq.number_next_actual or 0})
+
+    @api.model
+    def _get_current_sequence(self):
+        '''Returns the object on which we can find the number_next to consider for the sequence.
+        It could be an ir.sequence or an ir.sequence.date_range depending if use_date_range is checked
+        or not. This function will also create the ir.sequence.date_range if none exists yet for today
+        '''
+        if not self.use_date_range:
+            return self
+        now = fields.Date.today()
+        seq_date = self.env['ir.sequence.date_range'].search(
+            [('sequence_id', '=', self.id), ('date_from', '<=', now), ('date_to', '>=', now)], limit=1)
+        if seq_date:
+            return seq_date[0]
+        #no date_range sequence was found, we create a new one
+        return self._create_date_range_seq(now)
 
     name = fields.Char(required=True)
     code = fields.Char(string='Sequence Code')
@@ -178,7 +195,7 @@ class IrSequence(models.Model):
                 'weekday': '%w', 'h24': '%H', 'h12': '%I', 'min': '%M', 'sec': '%S'
             }
             res = {}
-            for key, format in sequences.iteritems():
+            for key, format in pycompat.items(sequences):
                 res[key] = effective_date.strftime(format)
                 res['range_' + key] = range_date.strftime(format)
                 res['current_' + key] = now.strftime(format)
@@ -245,16 +262,14 @@ class IrSequence(models.Model):
                 specific company will get higher priority.
         """
         self.check_access_rights('read')
-        company_ids = self.env['res.company'].search([]).ids + [False]
-        seq_ids = self.search(['&', ('code', '=', sequence_code), ('company_id', 'in', company_ids)])
-        if not seq_ids:
-            _logger.debug("No ir.sequence has been found for code '%s'. Please make sure a sequence is set for current company." % sequence_code)
-            return False
         force_company = self._context.get('force_company')
         if not force_company:
             force_company = self.env.user.company_id.id
-        preferred_sequences = [s for s in seq_ids if s.company_id and s.company_id.id == force_company]
-        seq_id = preferred_sequences[0] if preferred_sequences else seq_ids[0]
+        seq_ids = self.search([('code', '=', sequence_code), ('company_id', 'in', [force_company, False])], order='company_id')
+        if not seq_ids:
+            _logger.debug("No ir.sequence has been found for code '%s'. Please make sure a sequence is set for current company." % sequence_code)
+            return False
+        seq_id = seq_ids[0]
         return seq_id._next()
 
     @api.model

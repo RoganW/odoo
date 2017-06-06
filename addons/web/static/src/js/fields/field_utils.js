@@ -35,13 +35,16 @@ var _t = core._t;
  * @returns {jQueryElement}
  */
 function formatBoolean(value) {
-    var $input = $('<input type="checkbox">')
-                .prop('checked', value)
-                .prop('disabled', true);
-    return $('<div>')
-                .addClass('o_checkbox')
-                .append($input)
-                .append($('<span>'));
+    var $input = $('<input/>', {
+        type: 'checkbox',
+    }).prop({
+        checked: value,
+        disabled: true,
+    });
+    var $div = $('<div/>', {
+        class: 'o_checkbox',
+    });
+    return $div.append($input, '<span/>');
 }
 
 /**
@@ -49,10 +52,23 @@ function formatBoolean(value) {
  * an empty string.
  *
  * @param {string|false} value
+ * @param {Object} [field]
+ *        a description of the field (note: this parameter is ignored)
+ * @param {Object} [options] additional options
+ * @param {boolean} [options.escape=false] if true, escapes the formatted value
+ * @param {boolean} [options.isPassword=false] if true, returns '********'
+ *   instead of the formatted value
  * @returns {string}
  */
-function formatChar(value) {
-    return typeof value === 'string' ? value : '';
+function formatChar(value, field, options) {
+    value = typeof value === 'string' ? value : '';
+    if (options && options.isPassword) {
+        return _.str.repeat('*', value ? value.length : 0);
+    }
+    if (options && options.escape) {
+        value = _.escape(value);
+    }
+    return value;
 }
 
 /**
@@ -68,7 +84,7 @@ function formatChar(value) {
  * @returns {string}
  */
 function formatDate(value, field, options) {
-    if (!value) {
+    if (value === false) {
         return "";
     }
     if (!options || !('timezone' in options) || options.timezone) {
@@ -93,7 +109,7 @@ function formatDate(value, field, options) {
  * @returns {string}
  */
 function formatDateTime(value, field, options) {
-    if (!value) {
+    if (value === false) {
         return "";
     }
     if (!options || !('timezone' in options) || options.timezone) {
@@ -110,7 +126,7 @@ function formatDateTime(value, field, options) {
  * Returns a string representing a float.  The result takes into account the
  * user settings (to display the correct decimal separator).
  *
- * @param {float} value the value that should be formatted
+ * @param {float|false} value the value that should be formatted
  * @param {Object} [field] a description of the field (returned by fields_get
  *   for example).  It may contain a description of the number of digits that
  *   should be used.
@@ -121,6 +137,9 @@ function formatDateTime(value, field, options) {
  * @returns {string}
  */
 function formatFloat(value, field, options) {
+    if (value === false) {
+        return "";
+    }
     var l10n = core._t.database.parameters;
     var precision;
     if (options && options.digits) {
@@ -163,9 +182,16 @@ function formatFloatTime(value) {
  * return an empty string.
  *
  * @param {integer|false} value
+ * @param {Object} [field]
+ *        a description of the field (note: this parameter is ignored)
+ * @param {Object} [options] additional options
+ * @param {boolean} [options.isPassword=false] if true, returns '********'
  * @returns {string}
  */
-function formatInteger(value) {
+function formatInteger(value, field, options) {
+    if (options && options.isPassword) {
+        return _.str.repeat('*', String(value).length);
+    }
     if (!value && value !== 0) {
         // previously, it returned 'false'. I don't know why.  But for the Pivot
         // view, I want to display the concept of 'no value' with an empty
@@ -183,10 +209,18 @@ function formatInteger(value) {
  * case, we assume that it is a record from a BasicModel.
  *
  * @param {Array|Object|false} value
+ * @param {Object} [field]
+ *        a description of the field (note: this parameter is ignored)
+ * @param {Object} [options] additional options
+ * @param {boolean} [options.escape=false] if true, escapes the formatted value
  * @returns {string}
  */
-function formatMany2one(value) {
-    return value && (_.isArray(value) ? value[1] : value.data.display_name) || '';
+function formatMany2one(value, field, options) {
+    value = value && (_.isArray(value) ? value[1] : value.data.display_name) || '';
+    if (options && options.escape) {
+        value = _.escape(value);
+    }
+    return value;
 }
 
 /**
@@ -210,7 +244,7 @@ function formatX2Many(value) {
  * Returns a string representing a monetary value. The result takes into account
  * the user settings (to display the correct decimal separator, currency, ...).
  *
- * @param {float} value the value that should be formatted
+ * @param {float|false} value the value that should be formatted
  * @param {Object} [field]
  *        a description of the field (returned by fields_get for example). It
  *        may contain a description of the number of digits that should be used.
@@ -235,6 +269,9 @@ function formatX2Many(value) {
  * @returns {string}
  */
 function formatMonetary(value, field, options) {
+    if (value === false) {
+        return "";
+    }
     options = options || {};
 
     var currency = options.currency;
@@ -261,14 +298,27 @@ function formatMonetary(value, field, options) {
     }
 }
 
-function formatSelection(value, field) {
-    if (!value) {
-        return '';
-    }
+/**
+ * Returns a string representing the value of the selection.
+ *
+ * @param {string|false} value
+ * @param {Object} [field]
+ *        a description of the field (note: this parameter is ignored)
+ * @param {Object} [options] additional options
+ * @param {boolean} [options.escape=false] if true, escapes the formatted value
+ */
+function formatSelection(value, field, options) {
     var val = _.find(field.selection, function (option) {
         return option[0] === value;
     });
-    return val[1];
+    if (!val) {
+        return '';
+    }
+    value = val[1];
+    if (options && options.escape) {
+        value = _.escape(value);
+    }
+    return value;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -309,7 +359,7 @@ function parseDate(value, field, options) {
         }
         if (date.year() >= 1900) {
             date.toJSON = function () {
-                return this.format('YYYY-MM-DD');
+                return this.clone().locale('en').format('YYYY-MM-DD');
             };
             return date;
         }
@@ -342,7 +392,7 @@ function parseDateTime(value, field, options) {
     var pattern2 = datePatternWoZero + ' ' + timePatternWoZero;
     var datetime;
     if (options && options.isUTC) {
-        // phatomjs crash if we don't use this format 
+        // phatomjs crash if we don't use this format
         datetime = moment.utc(value.replace(' ', 'T') + 'Z');
     } else {
         datetime = moment.utc(value, [pattern1, pattern2, moment.ISO_8601], true);
@@ -356,7 +406,7 @@ function parseDateTime(value, field, options) {
         }
         if (datetime.year() >= 1900) {
             datetime.toJSON = function () {
-                return this.format('YYYY-MM-DD HH:mm:ss');
+                return this.clone().locale('en').format('YYYY-MM-DD HH:mm:ss');
             };
             return datetime;
         }
@@ -365,7 +415,10 @@ function parseDateTime(value, field, options) {
 }
 
 function parseFloat(value) {
-    value = value.replace(new RegExp(core._t.database.parameters.thousands_sep, "g"), '');
+    if (core._t.database.parameters.thousands_sep) {
+        var escapedSep = _.str.escapeRegExp(core._t.database.parameters.thousands_sep);
+        value = value.replace(new RegExp(escapedSep, 'g'), '');
+    }
     value = value.replace(core._t.database.parameters.decimal_point, '.');
     var parsed = Number(value);
     if (isNaN(parsed)) {
@@ -392,18 +445,10 @@ function parseInteger(value) {
     value = value.replace(new RegExp(core._t.database.parameters.thousands_sep, "g"), '');
     var parsed = Number(value);
     // do not accept not numbers or float values
-    if (isNaN(parsed) || parsed % 1) {
+    if (isNaN(parsed) || parsed % 1 || parsed < -2147483648 || parsed > 2147483647) {
         throw new Error(_.str.sprintf(core._t("'%s' is not a correct integer"), value));
     }
     return parsed;
-}
-
-function parseMonetary(formatted_value) {
-    var l10n = core._t.database.parameters;
-    var value = formatted_value.replace(l10n.thousands_sep, '')
-        .replace(l10n.decimal_point, '.')
-        .match(/([0-9]+(\.[0-9]*)?)/)[1];
-    return parseFloat(value);
 }
 
 /**
@@ -465,7 +510,7 @@ return {
         integer: parseInteger,
         many2many: _.identity, // todo
         many2one: parseMany2one,
-        monetary: parseMonetary,
+        monetary: parseFloat,
         one2many: _.identity,
         reference: _.identity, // todo
         selection: _.identity, // todo

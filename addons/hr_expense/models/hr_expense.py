@@ -5,9 +5,9 @@ import re
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-from odoo.tools import email_split, float_is_zero
+from odoo.tools import email_split, float_is_zero, pycompat
 
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 
 
 class HrExpense(models.Model):
@@ -18,7 +18,7 @@ class HrExpense(models.Model):
     _order = "date desc, id desc"
 
     name = fields.Char(string='Expense Description', readonly=True, required=True, states={'draft': [('readonly', False)], 'refused': [('readonly', False)]})
-    date = fields.Date(readonly=True, states={'draft': [('readonly', False)], 'refused': [('readonly', False)]}, default=fields.Date.context_today, string="Date")
+    date = fields.Date(readonly=True, states={'draft': [('readonly', False)], 'refused': [('readonly', False)]}, default=fields.Date.context_today, string="Expense Date")
     employee_id = fields.Many2one('hr.employee', string="Employee", required=True, readonly=True, states={'draft': [('readonly', False)], 'refused': [('readonly', False)]}, default=lambda self: self.env['hr.employee'].search([('user_id', '=', self.env.uid)], limit=1))
     product_id = fields.Many2one('product.product', string='Product', readonly=True, states={'draft': [('readonly', False)], 'refused': [('readonly', False)]}, domain=[('can_be_expensed', '=', True)], required=True)
     product_uom_id = fields.Many2one('product.uom', string='Unit of Measure', required=True, readonly=True, states={'draft': [('readonly', False)], 'refused': [('readonly', False)]}, default=lambda self: self.env['product.uom'].search([], limit=1, order='id'))
@@ -237,12 +237,12 @@ class HrExpense(models.Model):
                     })
 
             #convert eml into an osv-valid format
-            lines = map(lambda x: (0, 0, expense._prepare_move_line(x)), move_lines)
+            lines = [(0, 0, expense._prepare_move_line(x)) for x in move_lines]
             move.with_context(dont_create_taxes=True).write({'line_ids': lines})
             expense.sheet_id.write({'account_move_id': move.id})
             if expense.payment_mode == 'company_account':
                 expense.sheet_id.paid_expense_sheets()
-        for move in move_group_by_sheet.values():
+        for move in pycompat.values(move_group_by_sheet):
             move.post()
         return True
 
@@ -550,3 +550,11 @@ class HrExpenseSheet(models.Model):
         res['domain'] = [('id', 'in', self.mapped('account_move_id').ids)]
         res['context'] = {}
         return res
+
+
+    @api.one
+    @api.constrains('expense_line_ids')
+    def _check_employee(self):
+        employee_ids = self.expense_line_ids.mapped('employee_id')
+        if len(employee_ids) > 1 or (len(employee_ids) == 1 and employee_ids != self.employee_id):
+            raise ValidationError(_('You cannot add expense lines of another employee.'))

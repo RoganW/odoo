@@ -36,15 +36,12 @@ var KanbanColumn = Widget.extend({
         this._super(parent);
         this.db_id = data.id;
         this.data_records = data.data;
+        this.data = data;
 
         var value = data.value;
         this.id = data.res_id || value;
-        var field = data.fields[data.groupedBy[0]]; // fixme: grouped by field might not be in the fvg
-        if (field && field.type === "selection") {
-            value = _.find(field.selection, function (s) { return s[0] === data.value; })[1]; // fixme: same process done in list_renderer
-        }
         // todo: handle group_by_m2o (nameget)
-        this.title = value || _t('Undefined');
+        this.title = value === undefined ? _t('Undefined') : value;
         this.folded = !data.isOpen;
         this.has_active_field = 'active' in data.fields;
         this.size = data.count;
@@ -148,8 +145,8 @@ var KanbanColumn = Widget.extend({
         this.quickCreateWidget = new RecordQuickCreate(this, width);
         this.quickCreateWidget.insertAfter(this.$header);
         this.quickCreateWidget.$el.focusout(function () {
-            var hasFocus = (self.quickCreateWidget.$(':focus').length > 0);
-            if (! hasFocus && self.quickCreateWidget) {
+            var taskName = self.quickCreateWidget.$('[type=text]')[0].value;
+            if (!taskName && self.quickCreateWidget) {
                 self._cancelQuickCreate();
             }
         });

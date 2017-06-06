@@ -3,13 +3,13 @@ odoo.define('web_editor.backend', function (require) {
 
 var AbstractField = require('web.AbstractField');
 var basic_fields = require('web.basic_fields');
+var config = require('web.config');
 var core = require('web.core');
 var session = require('web.session');
 var field_registry = require('web.field_registry');
 
 var transcoder = require('web_editor.transcoder');
 
-var DebouncedField = basic_fields.DebouncedField;
 var QWeb = core.qweb;
 
 
@@ -22,23 +22,28 @@ var QWeb = core.qweb;
  * hasn't been re-introduced yet (because this feature hasn't been introduced
  * yet in the fields in general)
  */
-var FieldTextHtmlSimple = DebouncedField.extend({
+var FieldTextHtmlSimple = basic_fields.DebouncedField.extend({
     className: 'oe_form_field oe_form_field_html_text',
+    supportedFieldTypes: ['html'],
 
     //--------------------------------------------------------------------------
     // Public
     //--------------------------------------------------------------------------
 
     /**
-     * Summernote doesn't notify for all changes (e.g. changing the background
-     * color). Moreover, we can't detect that this field looses the focus, so
-     * we can't notify the environment that the value may have changed at that
-     * moment. So we always send the current value before saving.
+     * Summernote doesn't notify for changes done in code mode. We override
+     * commitChanges to manually switch back to normal mode before committing
+     * changes, so that the widget is aware of the changes done in code mode.
      *
      * @override
      */
     commitChanges: function () {
-        this._setValue(this._getValue());
+        // switch to WYSIWYG mode if currently in code mode to get all changes
+        if (config.debug && this.mode === 'edit') {
+            var layoutInfo = this.$textarea.data('layoutInfo');
+            $.summernote.pluginEvents.codeview(undefined, undefined, layoutInfo, false);
+        }
+        this._super.apply(this, arguments);
     },
     /**
      * @override
@@ -72,7 +77,7 @@ var FieldTextHtmlSimple = DebouncedField.extend({
      * @returns {Object} the summernote configuration
      */
     _getSummernoteConfig: function () {
-        var config = {
+        var summernoteConfig = {
             focus: false,
             height: 180,
             toolbar: [
@@ -89,12 +94,12 @@ var FieldTextHtmlSimple = DebouncedField.extend({
             styleWithSpan: false,
             inlinemedia: ['p'],
             lang: "odoo",
-            onChange: this._onInput.bind(this),
+            onChange: this._doDebouncedAction.bind(this),
         };
-        if (this.getSession().debug) {
-            config.toolbar.splice(7, 0, ['view', ['codeview']]);
+        if (config.debug) {
+            summernoteConfig.toolbar.splice(7, 0, ['view', ['codeview']]);
         }
-        return config;
+        return summernoteConfig;
     },
     /**
      * @override
@@ -216,7 +221,7 @@ var FieldTextHtml = AbstractField.extend({
         // init resize
         this.resize = function resize() {
             if (self.mode === 'edit') {
-                if ($("body").hasClass("o_form_FieldTextHtml_fullscreen")) {
+                if ($("body").hasClass("o_field_widgetTextHtml_fullscreen")) {
                     self.$iframe.css('height', (document.body.clientHeight - self.$iframe.offset().top) + 'px');
                 } else {
                     self.$iframe.css("height", (self.$body.find("#oe_snippets").length ? 500 : 300) + "px");
@@ -348,8 +353,8 @@ var FieldTextHtml = AbstractField.extend({
         $(QWeb.render('web_editor.FieldTextHtml.fullscreen'))
             .appendTo($to)
             .on('click', '.o_fullscreen', function () {
-                $("body").toggleClass("o_form_FieldTextHtml_fullscreen");
-                var full = $("body").hasClass("o_form_FieldTextHtml_fullscreen");
+                $("body").toggleClass("o_field_widgetTextHtml_fullscreen");
+                var full = $("body").hasClass("o_field_widgetTextHtml_fullscreen");
                 self.$iframe.parents().toggleClass('o_form_fullscreen_ancestor', full);
                 $(window).trigger("resize"); // induce a resize() call and let other backend elements know (the navbar extra items management relies on this)
             });

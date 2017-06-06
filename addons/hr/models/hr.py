@@ -7,7 +7,7 @@ from odoo import api, fields, models
 from odoo import tools, _
 from odoo.exceptions import ValidationError
 from odoo.modules.module import get_module_resource
-
+from odoo.tools import pycompat
 
 _logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class Job(models.Model):
     _description = "Job Position"
     _inherit = ['mail.thread']
 
-    name = fields.Char(string='Job Title', required=True, index=True, translate=True)
+    name = fields.Char(string='Job Position', required=True, index=True, translate=True)
     expected_employees = fields.Integer(compute='_compute_employees', string='Total Forecasted Employees', store=True,
         help='Expected number of employees for this job position after new recruitment.')
     no_of_employee = fields.Integer(compute='_compute_employees', string="Current Number of Employees", store=True,
@@ -118,13 +118,13 @@ class Employee(models.Model):
         ('male', 'Male'),
         ('female', 'Female'),
         ('other', 'Other')
-    ], groups="hr.group_hr_user")
+    ], groups="hr.group_hr_user", default="male")
     marital = fields.Selection([
         ('single', 'Single'),
-        ('married', 'Married'),
+        ('married', 'Married (or similar)'),
         ('widower', 'Widower'),
         ('divorced', 'Divorced')
-    ], string='Marital Status', groups="hr.group_hr_user")
+    ], string='Marital Status', groups="hr.group_hr_user", default='single')
     birthday = fields.Date('Date of Birth', groups="hr.group_hr_user")
     ssnid = fields.Char('SSN No', help='Social Security Number', groups="hr.group_hr_user")
     sinid = fields.Char('SIN No', help='Social Insurance Number', groups="hr.group_hr_user")
@@ -135,6 +135,10 @@ class Employee(models.Model):
         domain="[('partner_id', '=', address_home_id)]",
         groups="hr.group_hr_user",
         help='Employee bank salary account')
+    permit_no = fields.Char('Work Permit No')
+    visa_no = fields.Char('Visa No')
+    visa_expire = fields.Date('Visa Expire Date')
+
     # image: all image fields are base64 encoded and PIL-supported
     image = fields.Binary(
         "Photo", default=_default_image, attachment=True,
@@ -157,7 +161,7 @@ class Employee(models.Model):
     work_email = fields.Char('Work Email')
     work_location = fields.Char('Work Location')
     # employee in company
-    job_id = fields.Many2one('hr.job', 'Job Title')
+    job_id = fields.Many2one('hr.job', 'Job Position')
     department_id = fields.Many2one('hr.department', 'Department')
     parent_id = fields.Many2one('hr.employee', 'Manager')
     child_ids = fields.One2many('hr.employee', 'parent_id', string='Subordinates')
@@ -246,7 +250,7 @@ class Employee(models.Model):
         if auto_follow_fields is None:
             auto_follow_fields = ['user_id']
         user_field_lst = []
-        for name, field in self._fields.items():
+        for name, field in pycompat.items(self._fields):
             if name in auto_follow_fields and name in updated_fields and field.comodel_name == 'res.users':
                 user_field_lst.append(name)
         return user_field_lst
@@ -258,13 +262,14 @@ class Employee(models.Model):
 
 
 class Department(models.Model):
-
     _name = "hr.department"
     _description = "HR Department"
     _inherit = ['mail.thread']
     _order = "name"
+    _rec_name = 'complete_name'
 
     name = fields.Char('Department Name', required=True)
+    complete_name = fields.Char('Complete Name', compute='_compute_complete_name', store=True)
     active = fields.Boolean('Active', default=True)
     company_id = fields.Many2one('res.company', string='Company', index=True, default=lambda self: self.env.user.company_id)
     parent_id = fields.Many2one('hr.department', string='Parent Department', index=True)
@@ -275,20 +280,18 @@ class Department(models.Model):
     note = fields.Text('Note')
     color = fields.Integer('Color Index', default=1)
 
+    @api.depends('name', 'parent_id.complete_name')
+    def _compute_complete_name(self):
+        for department in self:
+            if department.parent_id:
+                department.complete_name = '%s / %s' % (department.parent_id.complete_name, department.name)
+            else:
+                department.complete_name = department.name
+
     @api.constrains('parent_id')
     def _check_parent_id(self):
         if not self._check_recursion():
             raise ValidationError(_('Error! You cannot create recursive departments.'))
-
-    @api.multi
-    def name_get(self):
-        result = []
-        for record in self:
-            name = record.name
-            if record.parent_id:
-                name = "%s / %s" % (record.parent_id.name_get()[0][1], name)
-            result.append((record.id, name))
-        return result
 
     @api.model
     def create(self, vals):

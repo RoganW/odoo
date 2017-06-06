@@ -20,7 +20,9 @@ var ListController = BasicController.extend({
     custom_events: _.extend({}, BasicController.prototype.custom_events, {
         add_record: '_onAddRecord',
         button_clicked: '_onButtonClicked',
-        change_mode: '_onChangeMode',
+        edit_line: '_onEditLine',
+        save_line: '_onSaveLine',
+        resequence: '_onResequence',
         selection_changed: '_onSelectionChanged',
         toggle_column_order: '_onToggleColumnOrder',
         toggle_group: '_onToggleGroup',
@@ -29,16 +31,15 @@ var ListController = BasicController.extend({
      * @constructor
      * @override
      * @param {Object} params
-     * @param {Object} params
      * @param {boolean} params.editable
      * @param {boolean} params.hasSidebar
-     * @param {boolean} params.hasToolbar
+     * @param {Object} params.toolbarActions
      * @param {boolean} params.noLeaf
      */
     init: function (parent, model, renderer, params) {
         this._super.apply(this, arguments);
         this.hasSidebar = params.hasSidebar;
-        this.hasToolbar = params.hasToolbar;
+        this.toolbarActions = params.toolbarActions || {};
         this.editable = params.editable;
         this.noLeaf = params.noLeaf;
         this.selectedRecords = []; // there is no selected record by default
@@ -49,11 +50,32 @@ var ListController = BasicController.extend({
     //--------------------------------------------------------------------------
 
     /**
+     * To improve performance, list view must not be rerendered if it is asked
+     * to discard all its changes. Indeed, only the in-edition row needs to be
+     * discarded in that case.
+     *
+     * @override
+     * @param {string} [recordID] - default to main recordID
+     * @returns {Deferred}
+     */
+    discardChanges: function (recordID) {
+        if ((recordID || this.handle) === this.handle) {
+            recordID = this.renderer.getEditableRecordID();
+            if (recordID === null) {
+                return $.when();
+            }
+        }
+        var self = this;
+        return this._super(recordID).then(function () {
+            self._updateButtons('readonly');
+        });
+    },
+    /**
      * Calculate the active domain of the list view. This should be done only
      * if the header checkbox has been checked. This is done by evaluating the
      * search results, and then adding the dataset domain (i.e. action domain).
      *
-     * @todo This is done only for the sidebar.  The full mechanism is wrong,
+     * @todo This is done only for the data export.  The full mechanism is wrong,
      * this method should be private, most of the code in the sidebar should be
      * moved to the controller, and we should not use the getParent method...
      *
@@ -71,7 +93,8 @@ var ListController = BasicController.extend({
                 contexts: [userContext].concat(searchData.contexts),
                 group_by_seq: searchData.groupbys || []
             });
-            return $.when(self.dataset.domain.concat(results.domain || []));
+            var record = self.model.get(self.handle, {raw: true});
+            return $.when(record.getDomain().concat(results.domain || []));
         } else {
             return $.Deferred().resolve();
         }
@@ -80,7 +103,7 @@ var ListController = BasicController.extend({
      * Returns the list of currently selected res_ids (with the check boxes on
      * the left)
      *
-     * @todo This should be private.  Need to change sidebar code
+     * @override
      *
      * @returns {number[]} list of res_ids
      */
@@ -93,14 +116,17 @@ var ListController = BasicController.extend({
     /**
      * Display and bind all buttons in the control panel
      *
+     * Note: clicking on the "Save" button does nothing special. Indeed, all
+     * editable rows are saved once left and clicking on the "Save" button does
+     * induce the leaving of the current row.
+     *
      * @override
-     * @param {jQuery Node} $node
+     * @param {jQuery} $node
      */
     renderButtons: function ($node) {
         if (!this.noLeaf && this.hasButtons) {
             this.$buttons = $(qweb.render('ListView.buttons', {widget: this}));
             this.$buttons.on('click', '.o_list_button_add', this._onCreateRecord.bind(this));
-            this.$buttons.on('click', '.o_list_button_save', this._onSave.bind(this));
             this.$buttons.on('click', '.o_list_button_discard', this._onDiscard.bind(this));
             this.$buttons.appendTo($node);
         }
@@ -113,12 +139,6 @@ var ListController = BasicController.extend({
      */
     renderSidebar: function ($node) {
         if (this.hasSidebar && !this.sidebar) {
-            this.sidebar = new Sidebar(this, {
-                editable: this.is_action_enabled('edit')
-            });
-            if (this.hasToolbar) {
-                this.sidebar.add_toolbar(this.fields_view.toolbar);
-            }
             var other = [{
                 label: _t("Export"),
                 callback: this._onExportData.bind(this)
@@ -138,8 +158,16 @@ var ListController = BasicController.extend({
                     label: _t('Delete'),
                     callback: this._onDeleteSelectedRecords.bind(this)
                 });
+            this.sidebar = new Sidebar(this, {
+                editable: this.is_action_enabled('edit'),
+                env: {
+                    context: this.model.get(this.handle, {raw: true}).getContext(),
+                    activeIds: this.getSelectedIds(),
+                    model: this.modelName,
+                },
+                actions: _.extend(this.toolbarActions, {other: other}),
+            });
             }
-            this.sidebar.add_items('other', other);
             this.sidebar.appendTo($node);
 
             this._toggleSidebar();
@@ -151,18 +179,41 @@ var ListController = BasicController.extend({
     //--------------------------------------------------------------------------
 
     /**
-     * Add a record to the list
+     * @see BasicController._abandonRecord
+     * If the given abandoned record is not the main one, notifies the renderer
+     * to remove the appropriate subrecord (line).
      *
+     * @override
+     * @private
+     * @param {string} [recordID] - default to the main recordID
+     */
+    _abandonRecord: function (recordID) {
+        this._super.apply(this, arguments);
+        if ((recordID || this.handle) !== this.handle) {
+            var state = this.model.get(this.handle);
+            this.renderer.removeLine(state, recordID);
+        }
+    },
+    /**
+     * Adds a record to the list.
+     * Disables the buttons to prevent concurrent record creation or edition.
+     *
+     * @todo make record creation a basic controller feature
      * @private
      */
     _addRecord: function () {
         var self = this;
-        this.model.addDefaultRecord(this.handle, {position: this.editable}).then(function (recordID) {
+        this._disableButtons();
+        return this.renderer.unselectRow().then(function () {
+            return self.model.addDefaultRecord(self.handle, {
+                position: self.editable,
+            });
+        }).then(function (recordID) {
             self._toggleNoContentHelper(false);
             var state = self.model.get(self.handle);
-            self.renderer.updateState(state);
+            self.renderer.updateState(state, {});
             self.renderer.editRecord(recordID);
-        });
+        }).always(this._enableButtons.bind(this));
     },
     /**
      * Archive the current selection
@@ -187,10 +238,38 @@ var ListController = BasicController.extend({
      * @override
      * @param {string} id a basicmodel valid resource handle.  It is supposed to
      *   be a record from the list view.
+     * @returns {Deferred}
      */
     _confirmSave: function (id) {
         var state = this.model.get(this.handle);
-        this.renderer.confirmSave(state, id);
+        return this.renderer.updateState(state, {noRender: true})
+            .then(this._setMode.bind(this, 'readonly', id));
+    },
+    /**
+     * @override
+     * @private
+     */
+    _getSidebarEnv: function () {
+        var env = this._super.apply(this, arguments);
+        var record = this.model.get(this.handle);
+        return _.extend(env, {domain: record.getDomain()});
+    },
+    /**
+     * Allows to change the mode of a single row.
+     *
+     * @override
+     * @private
+     * @param {string} mode
+     * @param {string} [recordID] - default to main recordID
+     * @returns {Deferred}
+     */
+    _setMode: function (mode, recordID) {
+        if ((recordID || this.handle) !== this.handle) {
+            this._updateButtons(mode);
+            return this.renderer.setRowMode(recordID, mode);
+        } else {
+            return this._super.apply(this, arguments);
+        }
     },
     /**
      * Display the sidebar (the 'action' menu in the control panel) if we have
@@ -207,6 +286,7 @@ var ListController = BasicController.extend({
      * @returns {Deferred}
      */
     _update: function (state) {
+        this.selectedRecords = [];
         this._toggleNoContentHelper(!this._hasContent(state));
         this._toggleSidebar();
         return this._super.apply(this, arguments);
@@ -248,17 +328,6 @@ var ListController = BasicController.extend({
         this._callButtonAction(event.data.attrs, event.data.record);
     },
     /**
-     * This event is triggered when a list renderer goes from mode = readonly to
-     * edit, and vice versa. In that case, we need to make sure that the buttons
-     * displayed in the control panel are correct.
-     *
-     * @private
-     * @param {OdooEvent} event
-     */
-    _onChangeMode: function (event) {
-        this._updateButtons(event.data.mode);
-    },
-    /**
      * When the user clicks on the 'create' button, two things can happen. We
      * can switch to the form view with no active res_id, so it is in 'create'
      * mode, or we can edit inline.
@@ -289,14 +358,21 @@ var ListController = BasicController.extend({
     /**
      * Handler called when the user clicked on the 'Discard' button.
      *
-     * @private
-     * @param {MouseEvent} event
+     * @param {Event} ev
      */
-    _onDiscard: function (event) {
-        event.stopPropagation();
-        this.model.discardChanges(this.handle);
-        this._updateButtons('readonly');
-        this.update(this.handle, {reload: false});
+    _onDiscard: function (ev) {
+        ev.stopPropagation(); // So that it is not considered as a row leaving
+        this.discardChanges();
+    },
+    /**
+     * Called when the user asks to edit a row -> Updates the controller buttons
+     *
+     * @param {OdooEvent} ev
+     */
+    _onEditLine: function (ev) {
+        ev.stopPropagation();
+        this._setMode('edit', ev.data.recordID)
+            .done(ev.data.onSuccess);
     },
     /**
      * Opens the Export Dialog
@@ -308,34 +384,42 @@ var ListController = BasicController.extend({
         new DataExport(this, record).open();
     },
     /**
-     * This method comes from the field manager mixin.
-     * @todo: there is a very similar method in kanban and form controllers.
-     * This should be moved in basic controller, and shared between basic views.
+     * Called when the renderer displays an editable row and the user tries to
+     * leave it -> Saves the record associated to that line.
      *
-     * @override
+     * @param {OdooEvent} ev
+     */
+    _onSaveLine: function (ev) {
+        var recordID = ev.data.recordID;
+        this.saveRecord(recordID)
+            .done(ev.data.onSuccess)
+            .fail(ev.data.onFailure);
+    },
+    /**
+     * Force a resequence of the records curently on this page.
+     *
      * @private
      * @param {OdooEvent} event
      */
-    _onFieldChanged: function (event) {
-        if (this.renderer.mode === 'readonly') {
-            event.data.force_save = true;
-        }
-        this._super.apply(this, arguments);
-    },
-    /**
-     * changes of the list editable are automatically saved when unselecting the
-     * row, which is done when clicking on 'Save' (anywhere outside the row
-     * actually), so this function should only switch back to readonly mode
-     *
-     * @private
-     * @param {MouseEvent} event
-     */
-    _onSave: function (event) {
-        // we prevent the event propagation because we don't want this event to
-        // trigger a click on the main bus, which would be then caught by the
-        // list editable renderer and would unselect the newly created row
-        // event.stopPropagation();
-        this._updateButtons('readonly');
+    _onResequence: function (event) {
+        var data = this.model.get(this.handle);
+        var resIDs = _.map(event.data.rowIDs, function(rowID) {
+            return _.findWhere(data.data, {id: rowID}).res_id;
+        })
+        return this._rpc({
+            route: '/web/dataset/resequence',
+            params: {
+                model: this.modelName,
+                ids: resIDs,
+                offset: event.data.offset,
+                field: event.data.handleField,
+            },
+        }).then(function () {
+            data.data = _.sortBy(data.data, function (d) {
+                return _.indexOf(resIDs, d.res_id);
+            });
+            return this.handle;
+        });
     },
     /**
      * When the current selection changes (by clicking on the checkboxes on the
@@ -347,6 +431,13 @@ var ListController = BasicController.extend({
     _onSelectionChanged: function (event) {
         this.selectedRecords = event.data.selection;
         this._toggleSidebar();
+    },
+    /**
+     * @override
+     */
+    _onSidebarDataAsked: function (event) {
+        var env = this._getSidebarEnv();
+        event.data.callback(env);
     },
     /**
      * Called when clicking on 'Archive' or 'Unarchive' in the sidebar.
@@ -372,7 +463,7 @@ var ListController = BasicController.extend({
             this.pager.updateState({current_min: 1});
         }
         this.model.setSort(data.id, event.data.name);
-        this.update();
+        this.update({});
     },
     /**
      * In a grouped list view, each group can be clicked on to open/close them.

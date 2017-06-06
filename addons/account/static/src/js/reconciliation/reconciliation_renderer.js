@@ -55,7 +55,7 @@ var StatementRenderer = Widget.extend(FieldManagerMixin, {
                     {mode: 'edit'});
 
                 self.name.appendTo(self.$('.statement_name_edition')).then(function () {
-                    self.name.$el.addClass('o_form_required');
+                    self.name.$el.addClass('o_required_modifier');
                 });
                 self.$('.statement_name').text(self._initialState.bank_statement_id.display_name);
             });
@@ -102,7 +102,7 @@ var StatementRenderer = Widget.extend(FieldManagerMixin, {
             .attr('aria-valuemax', state.valuemax)
             .css('width', (state.valuenow/state.valuemax*100) + '%');
 
-        if (state.valuenow === state.valuemax) {
+        if (state.valuenow === state.valuemax && !this.$('.done_message').length) {
             var dt = Date.now()-this.time;
             var $done = $(qweb.render("reconciliation.done", {
                 'duration': moment(dt).utc().format(time.strftime_to_moment_format(_t.database.parameters.time_format)),
@@ -129,6 +129,7 @@ var StatementRenderer = Widget.extend(FieldManagerMixin, {
      * @param {[object]} notifications
      */
     _renderNotifications: function(notifications) {
+        this.$(".notification_area").empty();
         for (var i=0; i<notifications.length; i++) {
             var $notification = $(qweb.render("reconciliation.notification", {
                 type: notifications[i].type,
@@ -458,7 +459,7 @@ var LineRenderer = Widget.extend(FieldManagerMixin, {
             self.$('.create').append($create);
 
             function addRequiredStyle(widget) {
-                widget.$el.addClass('o_form_required');
+                widget.$el.addClass('o_required_modifier');
             }
         });
     },
@@ -706,6 +707,7 @@ var ManualLineRenderer = LineRenderer.extend({
     _renderCreate: function (state) {
         this._super(state);
         this.$('.create .create_journal_id').show();
+        this.$('.create .create_journal_id .o_input').addClass('o_required_modifier');
     },
 
 });

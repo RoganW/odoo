@@ -113,12 +113,6 @@ var KanbanRenderer = BasicRenderer.extend({
         this.widgets[0].addQuickCreate();
     },
     /**
-     * @returns {Deferred}
-     */
-    canBeSaved: function () {
-        return $.when();
-    },
-    /**
      * Removes a widget (record if ungrouped, column if grouped) from the view.
      *
      * @param {Widget} widget the instance of the widget to remove
@@ -275,6 +269,8 @@ var KanbanRenderer = BasicRenderer.extend({
      * @private
      */
     _renderView: function () {
+        var oldWidgets = this.widgets;
+        this.widgets = [];
         var isGrouped = !!this.state.groupedBy.length;
         this.$el.toggleClass('o_kanban_grouped', isGrouped);
         this.$el.toggleClass('o_kanban_ungrouped', !isGrouped);
@@ -287,7 +283,7 @@ var KanbanRenderer = BasicRenderer.extend({
             this._renderUngrouped(fragment);
         }
         this.$el.append(fragment);
-        return this._super.apply(this, arguments);
+        return this._super.apply(this, arguments).then(_.invoke.bind(_, oldWidgets, 'destroy'));
     },
 });
 

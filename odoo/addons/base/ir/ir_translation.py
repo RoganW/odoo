@@ -8,6 +8,7 @@ from difflib import get_close_matches
 from odoo import api, fields, models, tools, SUPERUSER_ID, _
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.modules import get_module_path, get_module_resource
+from odoo.tools import pycompat
 
 _logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ class IrTranslationImport(object):
         env = api.Environment(cr, SUPERUSER_ID, {})
         src_relevant_fields = []
         for model in env:
-            for field_name, field in env[model]._fields.items():
+            for field_name, field in pycompat.items(env[model]._fields):
                 if hasattr(field, 'translate') and callable(field.translate):
                     src_relevant_fields.append("%s,%s" % (model, field_name))
 
@@ -395,7 +396,7 @@ class IrTranslation(models.Model):
         if isinstance(types, basestring):
             types = (types,)
         if res_id:
-            if isinstance(res_id, (int, long)):
+            if isinstance(res_id, pycompat.integer_types):
                 res_id = (res_id,)
             else:
                 res_id = tuple(res_id)
@@ -529,7 +530,7 @@ class IrTranslation(models.Model):
 
         # check for read/write access on translated field records
         fmode = 'read' if mode == 'read' else 'write'
-        for mname, ids in model_ids.iteritems():
+        for mname, ids in pycompat.items(model_ids):
             records = self.env[mname].browse(ids)
             records.check_access_rights(fmode)
             records.check_field_access_rights(fmode, model_fields[mname])
@@ -547,6 +548,9 @@ class IrTranslation(models.Model):
                     # (trans.value -> trans.src) gives the original value back
                     value0 = field.translate(lambda term: None, record[fname])
                     value1 = field.translate({trans.src: trans.value}.get, value0)
+                    # don't check the reverse if no translation happened
+                    if value0 == value1:
+                        continue
                     value2 = field.translate({trans.value: trans.src}.get, value1)
                     if value2 != value0:
                         raise ValidationError(_("Translation is not valid:\n%s") % trans.value)
@@ -639,7 +643,7 @@ class IrTranslation(models.Model):
             return ['&', ('res_id', '=', rec.id), ('name', '=', name)]
 
         # insert missing translations, and extend domain for related fields
-        for name, fld in record._fields.items():
+        for name, fld in pycompat.items(record._fields):
             if not fld.translate:
                 continue
 

@@ -5,7 +5,7 @@ import re
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-
+from odoo.tools import pycompat
 
 STREET_FIELDS = ('street_name', 'street_number', 'street_number2')
 
@@ -91,7 +91,7 @@ class Partner(models.Model):
         for partner in self:
             if not partner.street:
                 for field in street_fields:
-                    partner[field] = ''
+                    partner[field] = None
                 continue
 
             street_format = (partner.country_id.street_format or
@@ -135,7 +135,7 @@ class Partner(models.Model):
                 vals[field_name] = street_raw
             # assign the values to the fields
             # /!\ Note that a write(vals) would cause a recursion since it would bypass the cache
-            for k, v in vals.items():
+            for k, v in pycompat.items(vals):
                 partner[k] = v
 
 

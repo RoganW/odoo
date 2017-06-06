@@ -6,17 +6,17 @@ import datetime
 import hashlib
 import pytz
 import threading
-import urllib2
-import urlparse
 
 from email.utils import formataddr
+
+import requests
 from lxml import etree
+from werkzeug import urls
 
 from odoo import api, fields, models, tools, SUPERUSER_ID, _
 from odoo.modules import get_module_resource
 from odoo.osv.expression import get_unaccent_wrapper
 from odoo.exceptions import UserError, ValidationError
-from odoo.osv.orm import browse_record
 
 # Global variables used for the warning fields declared on the res.partner
 # in the following modules : sale, purchase, account, stock 
@@ -198,6 +198,7 @@ class Partner(models.Model):
     mobile = fields.Char()
     is_company = fields.Boolean(string='Is a Company', default=False,
         help="Check if the contact is a company, otherwise it is a person")
+    industry_id = fields.Many2one('res.partner.industry', 'Sector of Activity')
     # company_type is only an interface field, do not use it in business logic
     company_type = fields.Selection(string='Company Type',
         selection=[('person', 'Individual'), ('company', 'Company')],
@@ -476,11 +477,11 @@ class Partner(models.Model):
             parent.update_address(addr_vals)
 
     def _clean_website(self, website):
-        (scheme, netloc, path, params, query, fragment) = urlparse.urlparse(website)
-        if not scheme:
-            if not netloc:
-                netloc, path = path, ''
-            website = urlparse.urlunparse(('http', netloc, path, params, query, fragment))
+        url = urls.url_parse(website)
+        if not url.scheme:
+            if not url.netloc:
+                url = url.replace(netloc=url.path, path='')
+            website = url.replace(scheme='http').to_url()
         return website
 
     @api.multi
@@ -675,7 +676,7 @@ class Partner(models.Model):
                 query += ' limit %s'
                 where_clause_params.append(limit)
             self.env.cr.execute(query, where_clause_params)
-            partner_ids = map(lambda x: x[0], self.env.cr.fetchall())
+            partner_ids = [row[0] for row in self.env.cr.fetchall()]
 
             if partner_ids:
                 return self.browse(partner_ids).name_get()
@@ -698,15 +699,12 @@ class Partner(models.Model):
         return partners.id or self.name_create(email)[0]
 
     def _get_gravatar_image(self, email):
-        gravatar_image = False
         email_hash = hashlib.md5(email.lower()).hexdigest()
         url = "https://www.gravatar.com/avatar/" + email_hash
-        try:
-            image_content = urllib2.urlopen(url + "?d=404&s=128", timeout=5).read()
-            gravatar_image = base64.b64encode(image_content)
-        except Exception:
-            pass
-        return gravatar_image
+        res = requests.get(url, params={'d': '404', 's': '128'}, timeout=5)
+        if res.status_code != requests.codes.ok:
+            return False
+        return base64.b64encode(res.content)
 
     @api.multi
     def _email_send(self, email_from, subject, body, on_error=None):
@@ -767,6 +765,10 @@ class Partner(models.Model):
         ''' Return the main partner '''
         return self.env.ref('base.main_partner')
 
+    @api.model
+    def _get_default_address_format(self):
+        return "%(street)s\n%(street2)s\n%(city)s %(state_code)s %(zip)s\n%(country_name)s"
+
     @api.multi
     def _display_address(self, without_company=False):
 
@@ -782,7 +784,7 @@ class Partner(models.Model):
         # get the information that will be injected into the display format
         # get the address format
         address_format = self.country_id.address_format or \
-              "%(street)s\n%(street2)s\n%(city)s %(state_code)s %(zip)s\n%(country_name)s"
+            self._get_default_address_format()
         args = {
             'state_code': self.state_id.code or '',
             'state_name': self.state_id.name or '',
@@ -804,3 +806,13 @@ class Partner(models.Model):
             'country_id.address_format', 'country_id.code', 'country_id.name',
             'company_name', 'state_id.code', 'state_id.name',
         ]
+
+
+class ResPartnerIndustry(models.Model):
+    _description = 'Sector of Activity'
+    _name = "res.partner.industry"
+    _order = "name"
+
+    name = fields.Char('Name', translate=True)
+    full_name = fields.Char('Full Name', translate=True)
+    active = fields.Boolean('Active', default=True)

@@ -4,11 +4,13 @@
 from collections import defaultdict
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+from odoo.tools.misc import split_every
 from psycopg2 import OperationalError
 
 from odoo import api, fields, models, registry, _
 from odoo.osv import expression
-from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT, float_compare, float_round
+from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT, float_compare, \
+    float_round, pycompat
 
 import logging
 
@@ -239,9 +241,9 @@ class ProcurementOrder(models.Model):
 
             # Search all confirmed stock_moves and try to assign them
             confirmed_moves = self.env['stock.move'].search([('state', '=', 'confirmed')], limit=None, order='priority desc, date_expected asc')
-            for x in xrange(0, len(confirmed_moves.ids), 100):
+            for moves_chunk in split_every(100, confirmed_moves.ids):
                 # TDE CLEANME: muf muf
-                self.env['stock.move'].browse(confirmed_moves.ids[x:x + 100]).action_assign()
+                self.env['stock.move'].browse(moves_chunk).action_assign()
                 if use_new_cursor:
                     self._cr.commit()
             if use_new_cursor:
@@ -272,6 +274,11 @@ class ProcurementOrder(models.Model):
     def _procurement_from_orderpoint_post_process(self, orderpoint_ids):
         return True
 
+    def _get_orderpoint_domain(self, company_id=False):
+        domain = [('company_id', '=', company_id)] if company_id else []
+        domain += [('product_id.active', '=', True)]
+        return domain
+
     @api.model
     def _procure_orderpoint_confirm(self, use_new_cursor=False, company_id=False):
         """ Create procurements based on orderpoints.
@@ -281,9 +288,7 @@ class ProcurementOrder(models.Model):
         """
 
         OrderPoint = self.env['stock.warehouse.orderpoint']
-
-        domain = [('company_id', '=', company_id)] if company_id else []
-        domain += [('product_id.active', '=', True)]
+        domain = self._get_orderpoint_domain(company_id=company_id)
         orderpoints_noprefetch = OrderPoint.with_context(prefetch_fields=False).search(domain,
             order=self._procurement_from_orderpoint_get_order()).ids
         while orderpoints_noprefetch:
@@ -306,12 +311,14 @@ class ProcurementOrder(models.Model):
                 location_data[key]['orderpoints'] += orderpoint
                 location_data[key]['groups'] = self._procurement_from_orderpoint_get_groups([orderpoint.id])
 
-            for location_id, location_data in location_data.iteritems():
+            for location_id, location_data in pycompat.items(location_data):
                 location_orderpoints = location_data['orderpoints']
                 product_context = dict(self._context, location=location_orderpoints[0].location_id.id)
                 substract_quantity = location_orderpoints.subtract_procurements_from_orderpoints()
 
                 for group in location_data['groups']:
+                    if group.get('from_date'):
+                        product_context['from_date'] = group['from_date'].strftime(DEFAULT_SERVER_DATETIME_FORMAT)
                     if group['to_date']:
                         product_context['to_date'] = group['to_date'].strftime(DEFAULT_SERVER_DATETIME_FORMAT)
                     product_quantity = location_data['products'].with_context(product_context)._product_available()

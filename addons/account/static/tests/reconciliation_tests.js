@@ -512,7 +512,7 @@ QUnit.module('account', {
         assert.strictEqual(widget.$('.create').length, 1, "should have 'create' panel");
 
         assert.strictEqual(widget.$('thead').text().replace(/[\n\r\s]+/g, ' '), " 101401 2017-01-01 SAJ/2014/002 and SAJ/2014/003 $ 1,175.00 ", "should display the line information");
-        assert.ok(widget.$('caption .o_form_field.o_form_field_many2one').length, "should display the many2one with to select a partner");
+        assert.ok(widget.$('caption .o_field_many2one').length, "should display the many2one with to select a partner");
 
         assert.strictEqual(clientAction.$('[data-mode="inactive"]').length, 3, "should be as 'inactive' mode by default");
         assert.strictEqual(widget.$el.data('mode'), 'match', "the first one should automatically switch to match mode");
@@ -540,12 +540,12 @@ QUnit.module('account', {
 
         var widget = clientAction.widgets[0];
 
-        assert.strictEqual(widget.$('.o_form_input_dropdown input').val(), "Agrolait", "the partner many2one should display agrolait");
-        assert.strictEqual(clientAction.widgets[2].$('.o_form_input_dropdown input').val(), "Camptocamp", "the partner many2one should display Camptocamp");
+        assert.strictEqual(widget.$('.o_input_dropdown input').val(), "Agrolait", "the partner many2one should display agrolait");
+        assert.strictEqual(clientAction.widgets[2].$('.o_input_dropdown input').val(), "Camptocamp", "the partner many2one should display Camptocamp");
         widget.$('.accounting_view tfoot td:first').trigger('click');
-        assert.strictEqual(widget.$('.create .o_form_input').length, 6,
+        assert.strictEqual(widget.$('.create .o_input').length, 6,
             "create panel should display 5 fields (account_id, tax_id, analytic_account_id, label, amount)");
-        assert.strictEqual(widget.$('.create .create_account_id .o_form_required, .create .create_label .o_form_required, .create .create_amount .o_form_required').length, 3,
+        assert.strictEqual(widget.$('.create .create_account_id .o_required_modifier, .create .create_label .o_required_modifier, .create .create_amount .o_required_modifier').length, 3,
             "account_id, label and amount should be required fields");
         assert.strictEqual(widget.$('.create .create_label input').val(), 'SAJ/2014/002 and SAJ/2014/003',
             "should use the name of the reconciliation line for the default label value");
@@ -557,7 +557,7 @@ QUnit.module('account', {
 
 
     QUnit.test('Reconciliation basic data', function (assert) {
-        assert.expect(13);
+        assert.expect(14);
 
         var clientAction = new ReconciliationClientAction.StatementAction(null, this.params.options);
         testUtils.addMockEnvironment(clientAction, {
@@ -593,6 +593,21 @@ QUnit.module('account', {
 
         clientAction.widgets[3].$('.accounting_view thead td:first').trigger('click');
         assert.strictEqual(clientAction.widgets[3].$el.data('mode'), 'create', "should switch to 'create' mode instead 'match' mode when 'match' mode is empty");
+
+        // open the first line
+        widget.$('.accounting_view thead td:first').trigger('click');
+        // select propositions
+        widget.$('.match .cell_account_code:first').trigger('click');
+        widget.$('.match .cell_account_code:first').trigger('click');
+
+        testUtils.intercept(clientAction, 'call_service', function (event) {
+            assert.deepEqual(event.data.args[1].args,
+                [[5],[{partner_id: 8, counterpart_aml_dicts: [], payment_aml_ids: [109,112], new_aml_dicts: []}]],
+                "Should call process_reconciliations with ids");
+        });
+
+        // click on reconcile button
+        widget.$('button.o_reconcile:not(:hidden)').trigger('click');
 
         clientAction.destroy();
     });
@@ -909,7 +924,7 @@ QUnit.module('account', {
 
 
     QUnit.test('Reconciliation manual', function (assert) {
-        assert.expect(9);
+        assert.expect(8);
 
         var clientAction = new ReconciliationClientAction.ManualAction(null, this.params.options);
 
@@ -928,8 +943,6 @@ QUnit.module('account', {
 
         clientAction.$('.accounting_view:first .o_reconcile:visible').trigger('click');
 
-        assert.strictEqual(clientAction.$('.progress .progress-bar').attr('aria-valuenow'), "1", "should display a progress bar with 1 reconciled line");
-
         assert.strictEqual(clientAction.$('.accounting_view:first thead').text().replace(/[\n\r\s]+/g, ' '),
             " Agrolait 101200 ",
             "should display the partner and the account code as title");
@@ -940,35 +953,6 @@ QUnit.module('account', {
             "10,222.00 €", "sould display the monetary information in €");
 
         assert.strictEqual(clientAction.$('.accounting_view:first .o_no_valid:visible').length, 1, "should display the skip button");
-
-        clientAction.destroy();
-    });
-
-
-    QUnit.test('Reconciliation manual validate all', function (assert) {
-        assert.expect(6);
-
-        var clientAction = new ReconciliationClientAction.ManualAction(null, this.params.options);
-
-        testUtils.addMockEnvironment(clientAction, {
-            'data': this.params.data,
-            session: this.params.session,
-        });
-
-        clientAction.prependTo($('#qunit-fixture'));
-
-        assert.strictEqual(clientAction.$('.o_reconciliation_line[data-mode="match"]').length, 0, "should have every widgets in 'inactive' mode");
-        assert.strictEqual(clientAction.$('.o_reconciliation_line').length, 5, "should have 5 widgets to reconciled");
-        assert.strictEqual(clientAction.$('.o_reconciliation_line button.o_reconcile:visible').length, 3, "should have 3 widgets who display 'reconcile' button");
-
-        var e = $.Event("keyup");
-        e.which = 13;       // # Enter code value
-        e.ctrlKey = true;     // Ctrl key pressed
-        $("body").trigger(e);
-
-        assert.strictEqual(clientAction.$('.o_reconciliation_line').length, 3, "should have 2 already reconciled widgets");
-        assert.strictEqual(clientAction.$('.progress .progress-bar').attr('aria-valuenow'), "2", "should display a progress bar with 2 reconciled line");
-        assert.strictEqual(clientAction.$('.o_reconciliation_line[data-mode="match"]').length, 1, "should display the 'match' mode for the first line");
 
         clientAction.destroy();
     });

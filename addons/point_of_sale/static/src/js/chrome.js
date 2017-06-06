@@ -107,7 +107,7 @@ var UsernameWidget = PosBaseWidget.extend({
         });
     },
     get_name: function(){
-        var user = this.pos.cashier || this.pos.user;
+        var user = this.pos.get_cashier();
         if(user){
             return user.name;
         }else{

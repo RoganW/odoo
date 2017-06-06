@@ -30,13 +30,21 @@ var KanbanModel = BasicModel.extend({
             fieldsInfo: group.fieldsInfo,
             viewType: group.viewType,
         });
-        group.data.unshift(new_record);
+        group.data.unshift(new_record.id);
+        group.res_ids.unshift(resId);
         group.count++;
-        return this._fetchRecord(new_record)
-            // .then(this._fetch_relational_data.bind(this))
-            .then(function (result) {
-                return result.id;
-            });
+
+        // update the res_ids and count of the parent
+        var self = this;
+        var parent = this.localData[group.parentID];
+        parent.res_ids =  _.flatten(_.map(parent.data, function (dataPointID) {
+            return self.localData[dataPointID].res_ids;
+        }));
+        parent.count++;
+
+        return this._fetchRecord(new_record).then(function (result) {
+            return result.id;
+        });
     },
     /**
      * Creates a new group from a name (performs a name_create).
@@ -69,6 +77,7 @@ var KanbanModel = BasicModel.extend({
                     groupedBy: parent.groupedBy,
                     isOpen: true,
                     limit: parent.limit,
+                    parentID: parent.id,
                     openGroupByDefault: true,
                     orderedBy: parent.orderedBy,
                     value: result,
@@ -77,7 +86,6 @@ var KanbanModel = BasicModel.extend({
 
                 // newGroup.is_open = true;
                 parent.data.push(newGroup.id);
-                parent.count++;
                 return newGroup.id;
             });
     },
@@ -88,6 +96,19 @@ var KanbanModel = BasicModel.extend({
         this.defaultGroupedBy = params.groupBy;
         params.groupedBy = (params.groupedBy && params.groupedBy.length) ? params.groupedBy : this.defaultGroupedBy;
         return this._super(params);
+    },
+    /**
+     * Load more records in a group.
+     *
+     * @param {string} groupID localID of the group
+     * @returns {Deferred<string>} resolves to the localID of the group
+     */
+    loadMore: function (groupID) {
+        var group = this.localData[groupID];
+        var offset = group.loadMoreOffset + group.limit;
+        return this.reload(group.id, {
+            loadMoreOffset: offset,
+        });
     },
     /**
      * Moves a record from a group to another.
@@ -114,7 +135,7 @@ var KanbanModel = BasicModel.extend({
         }
         return this.notifyChanges(recordID, changes).then(function () {
             return self.save(recordID);
-        }).then(function (result) {
+        }).then(function () {
             // Remove record from its current group
             var old_group;
             for (var i = 0; i < parent.count; i++) {
@@ -127,7 +148,7 @@ var KanbanModel = BasicModel.extend({
                 }
             }
             // Add record to its new group
-            new_group.data.push(result.id);
+            new_group.data.push(recordID);
             new_group.count++;
             return [old_group.id, new_group.id];
         });

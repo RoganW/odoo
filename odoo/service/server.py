@@ -39,8 +39,8 @@ import odoo
 from odoo.modules.module import run_unit_tests, runs_post_install
 from odoo.modules.registry import Registry
 from odoo.release import nt_service_name
-import odoo.tools.config as config
-from odoo.tools import stripped_sys_argv, dumpstacks, log_ormcache_stats
+from odoo.tools import config
+from odoo.tools import stripped_sys_argv, dumpstacks, log_ormcache_stats, pycompat
 
 _logger = logging.getLogger(__name__)
 
@@ -212,14 +212,15 @@ class ThreadedServer(CommonServer):
             self.quit_signals_received += 1
 
     def cron_thread(self, number):
+        from odoo.addons.base.ir.ir_cron import ir_cron
         while True:
             time.sleep(SLEEP_INTERVAL + number)     # Steve Reich timing style
             registries = odoo.modules.registry.Registry.registries
             _logger.debug('cron%d polling for jobs', number)
-            for db_name, registry in registries.iteritems():
+            for db_name, registry in pycompat.items(registries):
                 while registry.ready:
                     try:
-                        acquired = odoo.addons.base.ir.ir_cron.ir_cron._acquire_job(db_name)
+                        acquired = ir_cron._acquire_job(db_name)
                         if not acquired:
                             break
                     except Exception:
@@ -342,27 +343,39 @@ class GeventServer(CommonServer):
         self.port = config['longpolling_port']
         self.httpd = None
 
-    def watch_parent(self, beat=4):
+    def process_limits(self):
+        restart = False
+        if self.ppid != os.getppid():
+            _logger.warning("LongPolling Parent changed", self.pid)
+            restart = True
+        rss, vms = memory_info(psutil.Process(self.pid))
+        if vms > config['limit_memory_soft']:
+            _logger.warning('LongPolling virtual memory limit reached: %s', vms)
+            restart = True
+        if restart:
+            # suicide !!
+            os.kill(self.pid, signal.SIGTERM)
+
+    def watchdog(self, beat=4):
         import gevent
-        ppid = os.getppid()
+        self.ppid = os.getppid()
         while True:
-            if ppid != os.getppid():
-                pid = os.getpid()
-                _logger.info("LongPolling (%s) Parent changed", pid)
-                # suicide !!
-                os.kill(pid, signal.SIGTERM)
-                return
+            self.process_limits()
             gevent.sleep(beat)
 
     def start(self):
         import gevent
         from gevent.wsgi import WSGIServer
 
+        # Set process memory limit as an extra safeguard
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        resource.setrlimit(resource.RLIMIT_AS, (config['limit_memory_hard'], hard))
+
         if os.name == 'posix':
             signal.signal(signal.SIGQUIT, dumpstacks)
             signal.signal(signal.SIGUSR1, log_ormcache_stats)
 
-        gevent.spawn(self.watch_parent)
+        gevent.spawn(self.watchdog)
         self.httpd = WSGIServer((self.interface, self.port), self.app)
         _logger.info('Evented Service (longpolling) running on %s:%s', self.interface, self.port)
         try:
@@ -513,7 +526,7 @@ class PreforkServer(CommonServer):
 
     def process_timeout(self):
         now = time.time()
-        for (pid, worker) in self.workers.items():
+        for (pid, worker) in pycompat.items(self.workers):
             if worker.watchdog_timeout is not None and \
                     (now - worker.watchdog_time) >= worker.watchdog_timeout:
                 _logger.error("%s (%s) timeout after %ss",
@@ -534,8 +547,8 @@ class PreforkServer(CommonServer):
     def sleep(self):
         try:
             # map of fd -> worker
-            fds = dict([(w.watchdog_pipe[0], w) for k, w in self.workers.items()])
-            fd_in = fds.keys() + [self.pipe[0]]
+            fds = {w.watchdog_pipe[0]: w for k, w in pycompat.items(self.workers)}
+            fd_in = list(pycompat.keys(fds)) + [self.pipe[0]]
             # check for ping or internal wakeups
             ready = select.select(fd_in, [], [], self.beat)
             # update worker watchdogs
@@ -550,7 +563,7 @@ class PreforkServer(CommonServer):
                     if e.errno not in [errno.EAGAIN]:
                         raise
         except select.error as e:
-            if e[0] not in [errno.EINTR]:
+            if e.args[0] not in [errno.EINTR]:
                 raise
 
     def start(self):
@@ -584,7 +597,7 @@ class PreforkServer(CommonServer):
         if graceful:
             _logger.info("Stopping gracefully")
             limit = time.time() + self.timeout
-            for pid in self.workers.keys():
+            for pid in self.workers:
                 self.worker_kill(pid, signal.SIGINT)
             while self.workers and time.time() < limit:
                 try:
@@ -596,7 +609,7 @@ class PreforkServer(CommonServer):
                 time.sleep(0.1)
         else:
             _logger.info("Stopping forcefully")
-        for pid in self.workers.keys():
+        for pid in self.workers:
             self.worker_kill(pid, signal.SIGTERM)
         if self.socket:
             self.socket.close()
@@ -660,7 +673,7 @@ class Worker(object):
         try:
             select.select([self.multi.socket], [], [], self.multi.beat)
         except select.error as e:
-            if e[0] not in [errno.EINTR]:
+            if e.args[0] not in [errno.EINTR]:
                 raise
 
     def process_limit(self):
@@ -802,7 +815,7 @@ class WorkerCron(Worker):
                 start_time = time.time()
                 start_rss, start_vms = memory_info(psutil.Process(os.getpid()))
 
-            import odoo.addons.base as base
+            from odoo.addons import base
             base.ir.ir_cron.ir_cron._acquire_job(db_name)
             odoo.modules.registry.Registry.delete(db_name)
 
@@ -863,7 +876,7 @@ def _reexec(updated_modules=None):
 
 def load_test_file_yml(registry, test_file):
     with registry.cursor() as cr:
-        odoo.tools.convert_yaml_import(cr, 'base', file(test_file), 'test', {}, 'init')
+        odoo.tools.convert_yaml_import(cr, 'base', open(test_file, 'rb'), 'test', {}, 'init')
         if config['test_commit']:
             _logger.info('test %s has been commited', test_file)
             cr.commit()
@@ -874,7 +887,7 @@ def load_test_file_yml(registry, test_file):
 def load_test_file_py(registry, test_file):
     # Locate python module based on its filename and run the tests
     test_path, _ = os.path.splitext(os.path.abspath(test_file))
-    for mod_name, mod_mod in sys.modules.items():
+    for mod_name, mod_mod in list(pycompat.items(sys.modules)):
         if mod_mod:
             mod_path, _ = os.path.splitext(getattr(mod_mod, '__file__', ''))
             if test_path == mod_path:
@@ -939,6 +952,9 @@ def start(preload=None, stop=False):
     if odoo.evented:
         server = GeventServer(odoo.service.wsgi_server.application)
     elif config['workers']:
+        if config['test_enable'] or config['test_file']:
+            _logger.warning("Unit testing in workers mode could fail; use --workers 0.")
+
         server = PreforkServer(odoo.service.wsgi_server.application)
     else:
         server = ThreadedServer(odoo.service.wsgi_server.application)

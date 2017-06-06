@@ -23,13 +23,13 @@ QUnit.test('format integer', function(assert) {
     assert.strictEqual(fieldUtils.format.integer(106500), '106,50,0');
 
     assert.strictEqual(fieldUtils.format.integer(0), "0");
-    assert.strictEqual(fieldUtils.format.integer(undefined), "");
+    assert.strictEqual(fieldUtils.format.integer(false), "");
 
     core._t.database.parameters.grouping = originalGrouping;
 });
 
 QUnit.test('format float', function(assert) {
-    assert.expect(4);
+    assert.expect(5);
 
     var originalParameters = $.extend(true, {}, core._t.database.parameters);
 
@@ -48,6 +48,7 @@ QUnit.test('format float', function(assert) {
         thousands_sep: '.'
     });
     assert.strictEqual(fieldUtils.format.float(6000), '6.000,00');
+    assert.strictEqual(fieldUtils.format.float(false), '');
 
     core._t.database.parameters = originalParameters;
 });
@@ -68,6 +69,12 @@ QUnit.test("format_many2one", function (assert) {
     assert.strictEqual('A M2O value', fieldUtils.format.many2one({
         data: { display_name: 'A M2O value' },
     }));
+});
+
+QUnit.test('format monetary', function(assert) {
+    assert.expect(1);
+
+    assert.strictEqual(fieldUtils.format.monetary(false), '');
 });
 
 QUnit.test('format char', function(assert) {
@@ -91,6 +98,38 @@ QUnit.test('format one2many', function(assert) {
     assert.strictEqual(fieldUtils.format.one2many({data: []}), 'No records');
     assert.strictEqual(fieldUtils.format.one2many({data: [1]}), '1 record');
     assert.strictEqual(fieldUtils.format.one2many({data: [1, 2]}), '2 records');
+});
+
+QUnit.test('parse float', function(assert) {
+    assert.expect(7);
+
+    assert.strictEqual(fieldUtils.parse.float(""), 0);
+    assert.strictEqual(fieldUtils.parse.float("0"), 0);
+    assert.strictEqual(fieldUtils.parse.float("100.00"), 100);
+    assert.strictEqual(fieldUtils.parse.float("-100.00"), -100);
+    assert.strictEqual(fieldUtils.parse.float("1,000.00"), 1000);
+    assert.strictEqual(fieldUtils.parse.float("1,000,000.00"), 1000000);
+
+    var originalParameters = $.extend(true, {}, core._t.database.parameters);
+    _.extend(core._t.database.parameters, {
+        grouping: [3, 0],
+        decimal_point: ',',
+        thousands_sep: '.'
+    });
+    assert.strictEqual(fieldUtils.parse.float('1.234,567'), 1234.567);
+
+    core._t.database.parameters = originalParameters;
+});
+
+QUnit.test('parse monetary', function(assert) {
+    assert.expect(6);
+
+    assert.strictEqual(fieldUtils.parse.monetary(""), 0);
+    assert.strictEqual(fieldUtils.parse.monetary("0"), 0);
+    assert.strictEqual(fieldUtils.parse.monetary("100.00"), 100);
+    assert.strictEqual(fieldUtils.parse.monetary("-100.00"), -100);
+    assert.strictEqual(fieldUtils.parse.monetary("1,000.00"), 1000);
+    assert.strictEqual(fieldUtils.parse.monetary("1,000,000.00"), 1000000);
 });
 });
 });

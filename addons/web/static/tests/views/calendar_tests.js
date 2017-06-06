@@ -151,7 +151,7 @@ QUnit.module('Views', {
             data: this.data,
             arch:
             '<calendar class="o_calendar_test" '+
-                'scale_zoom="week" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday" '+
@@ -198,15 +198,15 @@ QUnit.module('Views', {
         var $attendeesFilter =  $sidebar.find('.o_calendar_filter:has(h3:contains(attendees))');
         assert.ok($attendeesFilter.length, "should display 'attendees' filter");
         assert.strictEqual($attendeesFilter.find('.o_calendar_filter_item').length, 3, "should display 3 filter items for 'attendees' who use write_model (2 saved + Everything)");
-        assert.ok($attendeesFilter.find('.o_form_field_many2one').length, "should display one2many search bar for 'attendees' filter");
+        assert.ok($attendeesFilter.find('.o_field_many2one').length, "should display one2many search bar for 'attendees' filter");
 
         // test search bar in filter
 
-        $sidebar.find('input.o_form_input').trigger('click');
+        $sidebar.find('input[type="text"]').trigger('click');
         assert.strictEqual($('ul.ui-autocomplete li:not(.o_m2o_dropdown_option)').length, 2, "should display 2 choices in one2many autocomplete"); // TODO: remove :not(.o_m2o_dropdown_option) because can't have "create & edit" choice
         $('ul.ui-autocomplete li:first').trigger('click');
         assert.strictEqual($sidebar.find('.o_calendar_filter:has(h3:contains(attendees)) .o_calendar_filter_item').length, 4, "should display 4 filter items for 'attendees'");
-        $sidebar.find('input.o_form_input').trigger('click');
+        $sidebar.find('input[type="text"]').trigger('click');
         assert.strictEqual($('ul.ui-autocomplete li:not(.o_m2o_dropdown_option)').text(), "partner 4", "should display the last choice in one2many autocomplete"); // TODO: remove :not(.o_m2o_dropdown_option) because can't have "create & edit" choice
         $sidebar.find('.o_calendar_filter_item[data-id="1"] .o_remove').trigger('click');
         assert.ok($('.modal button.btn:contains(Ok)').length, "should display the confirm message");
@@ -225,7 +225,7 @@ QUnit.module('Views', {
             arch:
             '<calendar class="o_calendar_test" '+
                 'string="Events" ' +
-                'scale_zoom="week" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday" '+
@@ -360,7 +360,7 @@ QUnit.module('Views', {
             data: this.data,
             arch:
             '<calendar class="o_calendar_test" '+
-                'scale_zoom="week" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday" '+
@@ -396,7 +396,14 @@ QUnit.module('Views', {
         var top = calendar.$('.fc-axis:contains(8am)').offset().top + 5;
         var left = calendar.$('.fc-day:eq(2)').offset().left + 5;
 
-        testUtils.triggerPositionalMouseEvent(left, top, "mousedown");
+        try {
+            testUtils.triggerPositionalMouseEvent(left, top, "mousedown");
+        } catch (e) {
+            calendar.destroy();
+            $view.remove();
+            throw new Error('The test fails to simulate a click in the screen. Your screen is probably too small or your dev tools is open.');
+        }
+
         testUtils.triggerPositionalMouseEvent(left, top + 60, "mousemove");
 
         assert.strictEqual(calendar.$('.fc-content .fc-time').text(), "08:00 - 10:00",
@@ -454,7 +461,7 @@ QUnit.module('Views', {
             data: this.data,
             arch:
             '<calendar class="o_calendar_test" '+
-                'scale_zoom="week" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday" '+
@@ -497,34 +504,40 @@ QUnit.module('Views', {
         var top = calendar.$('.fc-axis:contains(8am)').offset().top + 5;
         var left = calendar.$('.fc-day:eq(2)').offset().left + 5;
 
-        testUtils.triggerPositionalMouseEvent(left, top, "mousedown");
+        try {
+            testUtils.triggerPositionalMouseEvent(left, top, "mousedown");
+        } catch (e) {
+            calendar.destroy();
+            $view.remove();
+            throw new Error('The test fails to simulate a click in the screen. Your screen is probably too small or your dev tools is open.');
+        }
         testUtils.triggerPositionalMouseEvent(left, top + 60, "mousemove");
         testUtils.triggerPositionalMouseEvent(left, top + 60, "mouseup");
         $('.modal input:first').val('new event').trigger('input');
         $('.modal button.btn:contains(Edit)').trigger('click');
 
-        assert.strictEqual($('.o_form_field[name="start"] input').val(), "12/13/2016 08:00:00",
+        assert.strictEqual($('.o_field_widget[name="start"] input').val(), "12/13/2016 08:00:00",
             "should display the datetime");
 
         $('.modal-lg .o_field_boolean[name="allday"] input').trigger('click');
 
-        assert.strictEqual($('.o_form_field[name="start_date"] input').val(), "12/13/2016",
+        assert.strictEqual($('.o_field_widget[name="start_date"] input').val(), "12/13/2016",
             "should display the date");
 
         $('.modal-lg .o_field_boolean[name="allday"] input').trigger('click');
 
-        assert.strictEqual($('.o_form_field[name="start"] input').val(), "12/13/2016 02:00:00",
+        assert.strictEqual($('.o_field_widget[name="start"] input').val(), "12/13/2016 02:00:00",
             "should display the datetime from the date with the timezone");
 
         // use datepicker to enter a date: 12/13/2016 08:00:00
-        $('.o_form_field[name="start"] input').trigger('click');
+        $('.o_field_widget[name="start"] input').trigger('click');
         $('.bootstrap-datetimepicker-widget .picker-switch a[data-action="togglePicker"]').trigger('click');
         $('.bootstrap-datetimepicker-widget .timepicker .timepicker-hour').trigger('click');
         $('.bootstrap-datetimepicker-widget .timepicker-hours td.hour:contains(08)').trigger('click');
         $('.bootstrap-datetimepicker-widget .picker-switch a[data-action="close"]').trigger('click');
 
         // use datepicker to enter a date: 12/13/2016 10:00:00
-        $('.o_form_field[name="stop"] input').trigger('click');
+        $('.o_field_widget[name="stop"] input').trigger('click');
         $('.bootstrap-datetimepicker-widget .picker-switch a[data-action="togglePicker"]').trigger('click');
         $('.bootstrap-datetimepicker-widget .timepicker .timepicker-hour').trigger('click');
         $('.bootstrap-datetimepicker-widget .timepicker-hours td.hour:contains(10)').trigger('click');
@@ -571,7 +584,7 @@ QUnit.module('Views', {
             data: this.data,
             arch:
             '<calendar class="o_calendar_test" '+
-                'scale_zoom="week" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday" '+
@@ -593,7 +606,13 @@ QUnit.module('Views', {
 
 
         var pos = calendar.$('.fc-bg td:eq(4)').offset();
-        testUtils.triggerPositionalMouseEvent(pos.left+15, pos.top+15, "mousedown");
+        try {
+            testUtils.triggerPositionalMouseEvent(pos.left+15, pos.top+15, "mousedown");
+        } catch (e) {
+            calendar.destroy();
+            $view.remove();
+            throw new Error('The test fails to simulate a click in the screen. Your screen is probably too small or your dev tools is open.');
+        }
         pos = calendar.$('.fc-bg td:eq(5)').offset();
         testUtils.triggerPositionalMouseEvent(pos.left+15, pos.top+15, "mousemove");
         testUtils.triggerPositionalMouseEvent(pos.left+15, pos.top+15, "mouseup");
@@ -629,7 +648,7 @@ QUnit.module('Views', {
             data: this.data,
             arch:
             '<calendar class="o_calendar_test" '+
-                'scale_zoom="week" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday" '+
@@ -664,6 +683,7 @@ QUnit.module('Views', {
             data: this.data,
             arch:
             '<calendar class="o_calendar_test" '+
+                'event_open_popup="true" '+
                 'date_start="start" '+
                 'date_stop="stop" '+
                 'all_day="allday"> '+
@@ -680,6 +700,151 @@ QUnit.module('Views', {
 
         calendar.destroy();
     });
+
+    QUnit.test('open form view', function (assert) {
+        assert.expect(3);
+
+        var calendar = createView({
+            View: CalendarView,
+            model: 'event',
+            data: this.data,
+            arch:
+            '<calendar class="o_calendar_test" '+
+                'string="Events" ' +
+                'date_start="start" '+
+                'date_stop="stop" '+
+                'all_day="allday" '+
+                'mode="month" '+
+                'readonly_form_view_id="1">'+
+                    '<field name="name"/>'+
+            '</calendar>',
+            archs: archs,
+            viewOptions: {
+                initialDate: initialDate,
+            },
+        });
+
+        // click on an existing event to open the form view
+
+        testUtils.intercept(calendar, 'do_action', function (event) {
+            assert.deepEqual(event.data.action,
+                {
+                    type: "ir.actions.act_window",
+                    res_id: 4,
+                    res_model: "event",
+                    views: [[false, "form"]],
+                    target: "current",
+                    context: {}
+                },
+                "should open the form view");
+        });
+        calendar.$('.fc-event:contains(event 4) .fc-content').trigger('click');
+
+        // create a new event and edit it
+
+        var $cell = calendar.$('.fc-day-grid .fc-row:eq(4) .fc-day:eq(2)');
+        testUtils.triggerMouseEvent($cell, "mousedown");
+        testUtils.triggerMouseEvent($cell, "mouseup");
+        $('.modal-body input:first').val('coucou').trigger('input');
+
+        testUtils.intercept(calendar, 'do_action', function (event) {
+            assert.deepEqual(event.data.action,
+                {
+                    type: "ir.actions.act_window",
+                    res_model: "event",
+                    views: [[false, "form"]],
+                    target: "current",
+                    context: {
+                        "default_name": "coucou",
+                        "default_start": "2016-12-27 00:00:00",
+                        "default_stop": "2016-12-27 00:00:00",
+                        "default_allday": true
+                    }
+                },
+                "should open the form view with the context default values");
+        });
+
+        $('.modal button.btn:contains(Edit)').trigger('click');
+
+        calendar.destroy();
+
+        assert.strictEqual($('#ui-datepicker-div:empty').length, 0, "should have a clean body");
+    });
+
+    QUnit.test('readonly date_start field', function (assert) {
+        assert.expect(4);
+
+        this.data.event.fields.start.readonly = true;
+
+        var calendar = createView({
+            View: CalendarView,
+            model: 'event',
+            data: this.data,
+            arch:
+            '<calendar class="o_calendar_test" '+
+                'string="Events" ' +
+                'date_start="start" '+
+                'date_stop="stop" '+
+                'all_day="allday" '+
+                'mode="month" '+
+                'readonly_form_view_id="1">'+
+                    '<field name="name"/>'+
+            '</calendar>',
+            archs: archs,
+            viewOptions: {
+                initialDate: initialDate,
+            },
+        });
+
+        assert.strictEqual(calendar.$('.fc-resizer').length, 0, "should not have resize button");
+
+        // click on an existing event to open the form view
+
+        testUtils.intercept(calendar, 'do_action', function (event) {
+            assert.deepEqual(event.data.action,
+                {
+                    type: "ir.actions.act_window",
+                    res_id: 4,
+                    res_model: "event",
+                    views: [[false, "form"]],
+                    target: "current",
+                    context: {}
+                },
+                "should open the form view");
+        });
+        calendar.$('.fc-event:contains(event 4) .fc-content').trigger('click');
+
+        // create a new event and edit it
+
+        var $cell = calendar.$('.fc-day-grid .fc-row:eq(4) .fc-day:eq(2)');
+        testUtils.triggerMouseEvent($cell, "mousedown");
+        testUtils.triggerMouseEvent($cell, "mouseup");
+        $('.modal-body input:first').val('coucou').trigger('input');
+
+        testUtils.intercept(calendar, 'do_action', function (event) {
+            assert.deepEqual(event.data.action,
+                {
+                    type: "ir.actions.act_window",
+                    res_model: "event",
+                    views: [[false, "form"]],
+                    target: "current",
+                    context: {
+                        "default_name": "coucou",
+                        "default_start": "2016-12-27 00:00:00",
+                        "default_stop": "2016-12-27 00:00:00",
+                        "default_allday": true
+                    }
+                },
+                "should open the form view with the context default values");
+        });
+
+        $('.modal button.btn:contains(Edit)').trigger('click');
+
+        calendar.destroy();
+
+        assert.strictEqual($('#ui-datepicker-div:empty').length, 0, "should have a clean body");
+    });
+
 });
 
 });

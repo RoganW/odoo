@@ -14,7 +14,7 @@ import odoo
 from odoo import api, models
 from odoo import SUPERUSER_ID
 from odoo.http import request
-from odoo.tools import config
+from odoo.tools import config, pycompat
 from odoo.exceptions import QWebException
 from odoo.tools.safe_eval import safe_eval
 
@@ -38,7 +38,6 @@ class Http(models.AbstractModel):
     _inherit = 'ir.http'
 
     rerouting_limit = 10
-    _geoip_resolver = None  # backwards-compatibility
 
     @classmethod
     def _get_converters(cls):
@@ -95,10 +94,7 @@ class Http(models.AbstractModel):
     @classmethod
     def _geoip_setup_resolver(cls):
         # Lazy init of GeoIP resolver
-        if cls._geoip_resolver is not None:
-            return
         if odoo._geoip_resolver is not None:
-            cls._geoip_resolver = odoo._geoip_resolver
             return
         try:
             import GeoIP
@@ -179,8 +175,8 @@ class Http(models.AbstractModel):
                 nearest_lang = not func and cls.get_nearest_lang(path[1])
                 url_lang = nearest_lang and path[1]
                 preferred_lang = ((cook_lang if cook_lang in langs else False)
-                                  or (not is_a_bot and cls.get_nearest_lang(request.lang))
-                                  or request.website.default_lang_code)
+                                  or request.website.default_lang_code
+                                  or (not is_a_bot and cls.get_nearest_lang(request.lang)))
 
                 request.lang = context['lang'] = nearest_lang or preferred_lang
                 # if lang in url but not the displayed or default language --> change or remove
@@ -241,7 +237,7 @@ class Http(models.AbstractModel):
     def _postprocess_args(cls, arguments, rule):
         super(Http, cls)._postprocess_args(arguments, rule)
 
-        for key, val in arguments.items():
+        for key, val in pycompat.items(arguments):
             # Replace uid placeholder by the current request.uid
             if isinstance(val, models.BaseModel) and isinstance(val._uid, RequestUID):
                 arguments[key] = val.sudo(request.uid)
@@ -283,7 +279,7 @@ class Http(models.AbstractModel):
 
             values = dict(
                 exception=exception,
-                traceback=traceback.format_exc(exception),
+                traceback=traceback.format_exc(),
             )
 
             if isinstance(exception, werkzeug.exceptions.HTTPException):

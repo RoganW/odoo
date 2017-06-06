@@ -39,6 +39,7 @@
                             <field name="iface_start_categ_id" />
                             <field name="tip_product_id" />
                             <field name="iface_tax_included" />
+                            <field name="restrict_price_control" />
                         </group>
                         <group>
                             <field name="iface_big_scrollbars" />
@@ -122,7 +123,7 @@
         <field name="type">ir.actions.act_window</field>
         <field name="res_model">pos.config</field>
         <field name="view_type">form</field>
-        <field name="view_mode">tree,form</field>
+        <field name="view_mode">tree,kanban,form</field>
         <field name="search_view_id" ref="view_pos_config_search" />
     </record>
 

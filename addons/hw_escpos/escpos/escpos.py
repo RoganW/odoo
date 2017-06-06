@@ -5,12 +5,12 @@ import base64
 import copy
 import io
 import math
-import md5
 import re
 import traceback
-import xml.etree.ElementTree as ET
+from hashlib import md5
 
 from PIL import Image
+from xml.etree import ElementTree as ET
 
 try:
     import jcconv
@@ -22,8 +22,8 @@ try:
 except ImportError:
     qrcode = None
 
-from constants import *
-from exceptions import *
+from .constants import *
+from .exceptions import *
 
 def utfstr(stuff):
     """ converts stuff to string and does without failing if stuff is a utf8 string """
@@ -168,8 +168,7 @@ class StyleStack:
     def to_escpos(self):
         """ converts the current style to an escpos command string """
         cmd = ''
-        ordered_cmds = self.cmds.keys()
-        ordered_cmds.sort(lambda x,y: cmp(self.cmds[x]['_order'], self.cmds[y]['_order']))
+        ordered_cmds = sorted(self.cmds, key=lambda x: self.cmds[x]['_order'])
         for style in ordered_cmds:
             cmd += self.cmds[style][self.get(style)]
         return cmd
@@ -432,7 +431,7 @@ class Escpos:
 
         print('print_b64_img')
 
-        id = md5.new(img).digest()
+        id = md5(img).digest()
 
         if id not in self.img_cache:
             print('not in cache')
@@ -789,7 +788,7 @@ class Escpos:
                     if encoding in remaining:
                         del remaining[encoding]
                     if len(remaining) >= 1:
-                        encoding = remaining.items()[0][0]
+                        (encoding, _) = remaining.popitem()
                     else:
                         encoding = 'cp437'
                         encoded  = '\xb1'    # could not encode, output error character

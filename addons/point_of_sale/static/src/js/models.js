@@ -56,7 +56,6 @@ exports.PosModel = Backbone.Model.extend({
         this.user = null;
         this.users = [];
         this.partners = [];
-        this.cashier = null;
         this.cashregisters = [];
         this.taxes = [];
         this.pos_session = null;
@@ -73,6 +72,7 @@ exports.PosModel = Backbone.Model.extend({
             'orders':           new OrderCollection(),
             'selectedOrder':    null,
             'selectedClient':   null,
+            'cashier':          null,
         });
 
         this.get('orders').bind('remove', function(order,_unused_,options){ 
@@ -178,13 +178,9 @@ exports.PosModel = Backbone.Model.extend({
         context: function(self){ return { active_test: false }; },
         loaded: function(self,units){
             self.units = units;
-            var units_by_id = {};
-            for(var i = 0, len = units.length; i < len; i++){
-                units_by_id[units[i].id] = units[i];
-                units[i].groupable = ( units[i].category_id[0] === 1 );
-                units[i].is_unit   = ( units[i].id === 1 );
-            }
-            self.units_by_id = units_by_id;
+            _.each(units, function(unit){
+                self.units_by_id[unit.id] = unit;
+            });
         }
     },{
         model:  'res.partner',
@@ -588,11 +584,11 @@ exports.PosModel = Backbone.Model.extend({
 
     // returns the user who is currently the cashier for this point of sale
     get_cashier: function(){
-        return this.cashier || this.user;
+        return this.get('cashier') || this.user;
     },
     // changes the current cashier
     set_cashier: function(user){
-        this.cashier = user;
+        this.set('cashier', user);
     },
     //creates a new empty order and sets it as the current order
     add_new_order: function(){
@@ -1276,7 +1272,7 @@ exports.Orderline = Backbone.Model.extend({
     },
     get_quantity_str_with_unit: function(){
         var unit = this.get_unit();
-        if(unit && !unit.is_unit){
+        if(unit && !unit.is_pos_groupable){
             return this.quantityStr + ' ' + unit.name;
         }else{
             return this.quantityStr;
@@ -1349,7 +1345,7 @@ exports.Orderline = Backbone.Model.extend({
     can_be_merged_with: function(orderline){
         if( this.get_product().id !== orderline.get_product().id){    //only orderline of the same product can be merged
             return false;
-        }else if(!this.get_unit() || !this.get_unit().groupable){
+        }else if(!this.get_unit() || !this.get_unit().is_pos_groupable){
             return false;
         }else if(this.get_product_type() !== orderline.get_product_type()){
             return false;
@@ -1533,7 +1529,7 @@ exports.Orderline = Backbone.Model.extend({
         }
         return false;
     },
-    compute_all: function(taxes, price_unit, quantity, currency_rounding) {
+    compute_all: function(taxes, price_unit, quantity, currency_rounding, no_map_tax) {
         var self = this;
         var list_taxes = [];
         var currency_rounding_bak = currency_rounding;
@@ -1544,7 +1540,9 @@ exports.Orderline = Backbone.Model.extend({
         var total_included = total_excluded;
         var base = total_excluded;
         _(taxes).each(function(tax) {
-            tax = self._map_tax_fiscal_position(tax);
+            if (!no_map_tax){
+                tax = self._map_tax_fiscal_position(tax);
+            }
             if (tax.amount_type === 'group'){
                 var ret = self.compute_all(tax.children_tax_ids, price_unit, quantity, currency_rounding);
                 total_excluded = ret.total_excluded;
@@ -1890,7 +1888,7 @@ exports.Order = Backbone.Model.extend({
             statement_ids: paymentLines,
             pos_session_id: this.pos_session_id,
             partner_id: this.get_client() ? this.get_client().id : false,
-            user_id: this.pos.cashier ? this.pos.cashier.id : this.pos.user.id,
+            user_id: this.pos.get_cashier().id,
             uid: this.uid,
             sequence_number: this.sequence_number,
             creation_date: this.validation_date || this.creation_date, // todo: rename creation_date in master
@@ -1910,7 +1908,7 @@ exports.Order = Backbone.Model.extend({
             paymentlines.push(paymentline.export_for_printing());
         });
         var client  = this.get('client');
-        var cashier = this.pos.cashier || this.pos.user;
+        var cashier = this.pos.get_cashier();
         var company = this.pos.company;
         var shop    = this.pos.shop;
         var date    = new Date();
@@ -2084,6 +2082,27 @@ exports.Order = Backbone.Model.extend({
         this.orderlines.remove(line);
         this.select_orderline(this.get_last_orderline());
     },
+
+    fix_tax_included_price: function(line){
+        if(this.fiscal_position){
+            var unit_price = line.price;
+            var taxes = line.get_taxes();
+            var mapped_included_taxes = [];
+            _(taxes).each(function(tax) {
+                var line_tax = line._map_tax_fiscal_position(tax);
+                if(tax.price_include && tax.id != line_tax.id){
+
+                    mapped_included_taxes.push(tax);
+                }
+            })
+
+            unit_price = line.compute_all(mapped_included_taxes, unit_price, 1, this.pos.currency.rounding, true).total_excluded;
+
+            line.set_unit_price(unit_price);
+        }
+
+    },
+
     add_product: function(product, options){
         if(this._printed){
             this.destroy();
@@ -2099,9 +2118,14 @@ exports.Order = Backbone.Model.extend({
         if(options.quantity !== undefined){
             line.set_quantity(options.quantity);
         }
+
         if(options.price !== undefined){
             line.set_unit_price(options.price);
         }
+
+        //To substract from the unit price the included taxes mapped by the fiscal position
+        this.fix_tax_included_price(line);
+
         if(options.discount !== undefined){
             line.set_discount(options.discount);
         }
@@ -2112,10 +2136,15 @@ exports.Order = Backbone.Model.extend({
             }
         }
 
-        var last_orderline = this.get_last_orderline();
-        if( last_orderline && last_orderline.can_be_merged_with(line) && options.merge !== false){
-            last_orderline.merge(line);
-        }else{
+        var to_merge_orderline;
+        for (var i = 0; i < this.orderlines.length; i++) {
+            if(this.orderlines.at(i).can_be_merged_with(line) && options.merge !== false){
+                to_merge_orderline = this.orderlines.at(i);
+            }
+        }
+        if (to_merge_orderline){
+            to_merge_orderline.merge(line);
+        } else {
             this.orderlines.add(line);
         }
         this.select_orderline(this.get_last_orderline());

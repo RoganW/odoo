@@ -14,6 +14,7 @@ class CRMSettings(models.TransientModel):
     # TDE TODO: as it is not linked to ir.values anymore, it should be renamed, but not in stable
     default_generate_lead_from_alias = fields.Boolean('Manual Assignation of Emails')
     group_use_lead = fields.Boolean(string="Leads", implied_group='crm.group_use_lead')
+    module_crm_phone_validation = fields.Boolean("Phone Validation")
     module_crm_voip = fields.Boolean("Asterisk (VoIP)")
 
     def _find_default_lead_alias_id(self):
@@ -59,7 +60,10 @@ class CRMSettings(models.TransientModel):
 
     @api.onchange('default_generate_lead_from_alias')
     def _onchange_default_generate_lead_from_alias(self):
-        self.alias_prefix = 'info' if self.default_generate_lead_from_alias else False
+        if self.default_generate_lead_from_alias:
+            self.alias_prefix = self.alias_prefix or 'info'
+        else:
+            self.alias_prefix = False
 
     @api.model
     def get_default_alias_prefix(self, fields):

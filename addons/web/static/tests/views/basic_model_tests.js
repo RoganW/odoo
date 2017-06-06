@@ -113,6 +113,32 @@ QUnit.module('Views', {
         model.destroy();
     });
 
+    QUnit.test('notify change on many2one: unset and reset same value', function (assert) {
+        assert.expect(3);
+
+        this.data.partner.records[1].qux = 1;
+
+        this.params.fieldNames = ['qux'];
+        var model = createModel({
+            Model: BasicModel,
+            data: this.data,
+        });
+
+        model.load(this.params).then(function (resultID) {
+            var record = model.get(resultID);
+            assert.strictEqual(record.data.qux.data.id, 1, "qux value should be 1");
+
+            model.notifyChanges(resultID, {qux: false});
+            record = model.get(resultID);
+            assert.strictEqual(record.data.qux, false, "qux should be unset");
+
+            model.notifyChanges(resultID, {qux: {id: 1, display_name: 'second_partner'}});
+            record = model.get(resultID);
+            assert.strictEqual(record.data.qux.data.id, 1, "qux value should be 1 again");
+        });
+        model.destroy();
+    });
+
     QUnit.test('write on a many2one', function (assert) {
         assert.expect(4);
         var self = this;
@@ -407,6 +433,40 @@ QUnit.module('Views', {
         model.destroy();
     });
 
+    QUnit.test('many2many with ADD_M2M command and context with parent key', function (assert) {
+        assert.expect(1);
+
+        this.data.partner_type.fields.some_char = {type: "char"};
+        this.params.fieldsInfo = {
+            default: {
+                category: {
+                    fieldsInfo: {default: {some_char: { context: "{'a': parent.foo}"}}},
+                    relatedFields: {some_char: {type: "char"}},
+                    viewType: 'default',
+                },
+                foo: {},
+            },
+        };
+
+        var model = createModel({
+            Model: BasicModel,
+            data: this.data,
+        });
+
+        model.load(this.params).then(function (resultID) {
+            var changes = {
+                category: {operation: 'ADD_M2M', ids: [{id: 12}]}
+            };
+            model.notifyChanges(resultID, changes).then(function () {
+                var record = model.get(resultID);
+                var categoryRecord = record.data.category.data[0];
+                assert.deepEqual(categoryRecord.getContext({fieldName: 'some_char'}), {a:'gnap'},
+                    "should properly evaluate context");
+            });
+        });
+        model.destroy();
+    });
+
     QUnit.test('can fetch a list', function (assert) {
         assert.expect(4);
 
@@ -416,7 +476,6 @@ QUnit.module('Views', {
         this.params.res_id = undefined;
         this.params.context = {active_field: 2};
 
-        var rpcCount = 0;
         var model = createModel({
             Model: BasicModel,
             data: this.data,
@@ -708,7 +767,7 @@ QUnit.module('Views', {
     });
 
     QUnit.test('internal state of groups remains when reloading', function (assert) {
-        assert.expect(9);
+        assert.expect(10);
 
         this.params.fieldNames = ['foo'];
         this.params.domain = [];
@@ -740,6 +799,9 @@ QUnit.module('Views', {
             var record = model.get(resultID);
             assert.strictEqual(record.data.length, 2, "should have 2 groups");
             var groupID = record.data[0].id;
+            assert.strictEqual(model.localData[groupID].parentID, resultID,
+                "parentID should be correctly set on groups");
+
             model.toggleGroup(groupID);
 
             record = model.get(resultID);
@@ -769,6 +831,43 @@ QUnit.module('Views', {
                 "first group's count should be 0");
             assert.strictEqual(record.data[0].data.length, 0,
                 "first group's data should be empty'");
+        });
+        model.destroy();
+    });
+
+    QUnit.test('read group when grouped by a selection field', function (assert) {
+        assert.expect(5);
+
+        this.data.partner.fields.selection = {
+            type: 'selection',
+            selection: [['a', 'A'], ['b', 'B']],
+        };
+        this.data.partner.records[0].selection = 'a';
+
+        var model = createModel({
+            Model: BasicModel,
+            data: this.data,
+        });
+        var params = {
+            modelName: 'partner',
+            fields: this.data.partner.fields,
+            fieldNames: ['foo'],
+            groupedBy: ['selection'],
+        };
+
+        model.load(params).then(function (resultID) {
+            var dataPoint = model.get(resultID);
+            assert.strictEqual(dataPoint.data.length, 2, "should have two groups");
+
+            var groupFalse = _.findWhere(dataPoint.data, {value: false});
+            assert.ok(groupFalse, "should have a group for value false");
+            assert.deepEqual(groupFalse.domain, [['selection', '=', false]],
+                "group's domain should be correct");
+
+            var groupA = _.findWhere(dataPoint.data, {value: 'A'});
+            assert.ok(groupA, "should have a group for value 'a'");
+            assert.deepEqual(groupA.domain, [['selection', '=', 'a']],
+                "group's domain should be correct");
         });
         model.destroy();
     });
@@ -1157,32 +1256,6 @@ QUnit.module('Views', {
         model.destroy();
     });
 
-    QUnit.test('get method works on unset x2many, after save without reload', function (assert) {
-        assert.expect(3);
-
-        var model = createModel({
-            Model: BasicModel,
-            data: this.data,
-        });
-
-        var params = {
-            fieldNames: ['product_ids'],
-            fields: this.data.partner.fields,
-            modelName: 'partner',
-            type: 'record',
-        };
-
-        model.load(params).then(function (resultID) {
-            assert.ok(model.isDirty(resultID), "datapoint should be dirty");
-            model.save(resultID, {reload: false});
-            var record = model.get(resultID, {raw: true});
-            assert.deepEqual(record.data.product_ids, [],
-                "should have correct value for product_ids field");
-            assert.notOk(model.isDirty(resultID), "datapoint should not be dirty");
-        });
-        model.destroy();
-    });
-
     QUnit.test('call makeRecord with a pre-fetched many2one field', function (assert) {
         assert.expect(3);
         var rpcCount = 0;
@@ -1347,7 +1420,7 @@ QUnit.module('Views', {
         var model = createModel({
             Model: BasicModel,
             data: this.data,
-            mockRPC: function(route, args) {
+            mockRPC: function (route, args) {
                 assert.step(args.method);
                 return this._super(route, args);
             },
@@ -1358,4 +1431,111 @@ QUnit.module('Views', {
             "there should be only one read");
         model.destroy();
     });
+
+    QUnit.test('data should contain all fields in view, default being false', function (assert) {
+        assert.expect(1);
+
+        this.data.partner.fields.product_ids.default = [
+            [6, 0, []],
+            [0, 0, {name: 'new'}],
+        ];
+        this.data.product.fields.date = { string: "Date", type: "date" };
+
+        var params = {
+            fieldNames: ['product_ids'],
+            modelName: 'partner',
+            fields: this.data.partner.fields,
+            fieldsInfo: {
+                form: {
+                    product_ids: {
+                        fieldsInfo: { list: { name: {}, date: {} } },
+                        viewType: 'list',
+                    }
+                },
+            },
+            res_id: undefined,
+            type: 'record',
+            viewType: 'form',
+        };
+
+        var model = createModel({
+            Model: BasicModel,
+            data: this.data,
+        });
+
+        model.load(params).then(function (resultID) {
+            var record = model.get(resultID);
+            assert.strictEqual(record.data.product_ids.data[0].data.date, false,
+                "date value should be in data, and should be false");
+        });
+
+        model.destroy();
+    });
+
+    QUnit.test('changes are discarded when reloading from a new record', function (assert) {
+        // practical use case: click on 'Create' to open a form view in edit
+        // mode (new record), click on 'Discard', then open an existing record
+        assert.expect(2);
+
+        this.data.partner.fields.foo.default = 'default';
+        var model = createModel({
+            Model: BasicModel,
+            data: this.data,
+        });
+
+        // load a new record (default_get)
+        var params = _.extend(this.params, {
+            res_id: undefined,
+            type: 'record',
+            fieldNames: ['foo'],
+        });
+        model.load(params).then(function (resultID) {
+            var record = model.get(resultID);
+            assert.strictEqual(record.data.foo, 'default',
+                "should be the default value");
+
+            // reload with id 2
+            model.reload(record.id, {currentId: 2}).then(function (resultID) {
+                var record = model.get(resultID);
+                assert.strictEqual(record.data.foo, 'gnap',
+                    "should be the value of record 2");
+            });
+        });
+
+        model.destroy();
+    });
+
+    QUnit.test('has a proper evaluation context', function (assert) {
+        assert.expect(1);
+
+        this.params.fieldNames = Object.keys(this.data.partner.fields);
+        this.params.res_id = 1;
+
+        var model = createModel({
+            Model: BasicModel,
+            data: this.data,
+        });
+
+        model.load(this.params).then(function (resultID) {
+            var record = model.get(resultID);
+            assert.deepEqual(record.evalContext, {
+                active_id: 1,
+                active_ids: [1],
+                active_model: "partner",
+                bar: 1,
+                category: [12],
+                current_date: moment().format('YYYY-MM-DD'),
+                date: "2017-01-25",
+                display_name: "first partner",
+                foo: "blip",
+                id: 1,
+                product_id: 37,
+                product_ids: [],
+                qux: false,
+                total: 0
+            }, "should use the proper eval context");
+        });
+        model.destroy();
+    });
+
 });});

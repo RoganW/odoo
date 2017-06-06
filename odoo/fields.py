@@ -7,16 +7,18 @@ from collections import OrderedDict, defaultdict
 from datetime import date, datetime
 from functools import partial
 from operator import attrgetter
-from types import NoneType
 import logging
 import pytz
-import xmlrpclib
+try:
+    from xmlrpc.client import MAXINT
+except ImportError:
+    #pylint: disable=bad-python3-import
+    from xmlrpclib import MAXINT
 
 import psycopg2
 
 from odoo.sql_db import LazyCursor
-from odoo.tools import float_precision, float_repr, float_round, frozendict, \
-                       html_sanitize, human_size, pg_varchar, ustr, OrderedSet
+from odoo.tools import float_repr, float_round, frozendict, html_sanitize, human_size, pg_varchar, ustr, OrderedSet, pycompat
 from odoo.tools import DEFAULT_SERVER_DATE_FORMAT as DATE_FORMAT
 from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT as DATETIME_FORMAT
 from odoo.tools.translate import html_translate, _
@@ -102,6 +104,9 @@ class MetaField(type):
 
     def __init__(cls, name, bases, attrs):
         super(MetaField, cls).__init__(name, bases, attrs)
+        if not hasattr(cls, 'type'):
+            return
+
         if cls.type and cls.type not in MetaField.by_type:
             MetaField.by_type[cls.type] = cls
 
@@ -115,7 +120,7 @@ class MetaField(type):
                 cls.description_attrs.append((attr[13:], attr))
 
 
-class Field(object):
+class Field(MetaField('DummyField', (object,), {})):
     """ The field descriptor contains the field definition, and manages accesses
         and assignments of the corresponding field on records. The following
         attributes may be provided when instanciating a field:
@@ -277,7 +282,6 @@ class Field(object):
                 state = fields.Selection(help="Blah blah blah")
 
     """
-    __metaclass__ = MetaField
 
     type = None                         # type of the field (string)
     relational = False                  # whether the field is a relational one
@@ -332,7 +336,7 @@ class Field(object):
 
     def __init__(self, string=Default, **kwargs):
         kwargs['string'] = string
-        args = {key: val for key, val in kwargs.iteritems() if val is not Default}
+        args = {key: val for key, val in pycompat.items(kwargs) if val is not Default}
         self.args = args or EMPTY_DICT
         self._setup_done = None
 
@@ -361,7 +365,7 @@ class Field(object):
         """ Set all field attributes at once (with slot defaults). """
         # optimization: we assign slots only
         assign = object.__setattr__
-        for key, val in self._slots.iteritems():
+        for key, val in pycompat.items(self._slots):
             assign(self, key, attrs.pop(key, val))
         if attrs:
             assign(self, '_attrs', attrs)
@@ -539,7 +543,7 @@ class Field(object):
             if not getattr(self, attr):
                 setattr(self, attr, getattr(field, prop))
 
-        for attr, value in field._attrs.iteritems():
+        for attr, value in pycompat.items(field._attrs):
             if attr not in self._attrs:
                 setattr(self, attr, value)
 
@@ -562,7 +566,7 @@ class Field(object):
         """ Compute the related field ``self`` on ``records``. """
         # when related_sudo, bypass access rights checks when reading values
         others = records.sudo() if self.related_sudo else records
-        for record, other in zip(records, others):
+        for record, other in pycompat.izip(records, others):
             if not record.id and record.env != other.env:
                 # draft records: copy record's cache to other's cache first
                 copy_cache(record, other.env)
@@ -647,7 +651,7 @@ class Field(object):
                 model = model0.env.get(field.comodel_name)
 
         # add self's model dependencies
-        for mname, fnames in model0._depends.iteritems():
+        for mname, fnames in pycompat.items(model0._depends):
             model = model0.env[mname]
             for fname in fnames:
                 field = model._fields[fname]
@@ -733,9 +737,9 @@ class Field(object):
         """ Return the null value for this field in the record format. """
         return False
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         """ Convert ``value`` from the ``write`` format to the SQL format. """
-        if value is None or value == False:
+        if value is None or value is False:
             return None
         if isinstance(value, unicode):
             return value.encode('utf8')
@@ -999,7 +1003,7 @@ class Field(object):
                     # HACK: if result is in the wrong cache, copy values
                     if recs.env != env:
                         computed = record._field_computed[self]
-                        for source, target in zip(recs, recs.with_env(env)):
+                        for source, target in pycompat.izip(recs, recs.with_env(env)):
                             try:
                                 values = target._convert_to_cache({
                                     f.name: source[f.name] for f in computed
@@ -1068,8 +1072,8 @@ class Field(object):
         for field, path in records._field_triggers[self]:
             bymodel[field.model_name][path].append(field)
 
-        for model_name, bypath in bymodel.iteritems():
-            for path, fields in bypath.iteritems():
+        for model_name, bypath in pycompat.items(bymodel):
+            for path, fields in pycompat.items(bypath):
                 if path and any(field.compute and field.store for field in fields):
                     # process stored fields
                     stored = set(field for field in fields if field.compute and field.store)
@@ -1136,7 +1140,7 @@ class Boolean(Field):
     type = 'boolean'
     column_type = ('bool', 'bool')
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         return bool(value)
 
     def convert_to_cache(self, value, record, validate=True):
@@ -1157,7 +1161,7 @@ class Integer(Field):
 
     _description_group_operator = property(attrgetter('group_operator'))
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         return int(value or 0)
 
     def convert_to_cache(self, value, record, validate=True):
@@ -1169,7 +1173,7 @@ class Integer(Field):
     def convert_to_read(self, value, record, use_name_get=True):
         # Integer values greater than 2^31-1 are not supported in pure XMLRPC,
         # so we have to pass them as floats :-(
-        if value and value > xmlrpclib.MAXINT:
+        if value and value > MAXINT:
             return float(value)
         return value
 
@@ -1221,7 +1225,7 @@ class Float(Field):
     _description_digits = property(attrgetter('digits'))
     _description_group_operator = property(attrgetter('group_operator'))
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         result = float(value or 0.0)
         digits = self.digits
         if digits:
@@ -1275,25 +1279,33 @@ class Monetary(Field):
         assert self.currency_field in model._fields, \
             "Field %s with unknown currency_field %r" % (self, self.currency_field)
 
-    def convert_to_column(self, value, record):
-        try:
-            return value.float_repr()         # see float_precision.float_repr()
-        except Exception:
-            return float(value or 0.0)
+    def convert_to_column(self, value, record, values=None):
+        # retrieve currency from values or record
+        if values and self.currency_field in values:
+            field = record._fields[self.currency_field]
+            currency = field.convert_to_cache(values[self.currency_field], record)
+            currency = field.convert_to_record(currency, record)
+        else:
+            # Note: this is wrong if 'record' is several records with different
+            # currencies, which is functional nonsense and should not happen
+            currency = record[:1][self.currency_field]
+
+        value = float(value or 0.0)
+        if currency:
+            return float_repr(currency.round(value), currency.decimal_places)
+        return value
 
     def convert_to_cache(self, value, record, validate=True):
-        if validate:
-            currency = record[self.currency_field]
+        # cache format: float
+        value = float(value or 0.0)
+        if validate and record[self.currency_field]:
             # FIXME @rco-odoo: currency may not be already initialized if it is
             # a function or related field!
-            if currency:
-                value = currency.round(float(value or 0.0))
-                return float_precision(value, currency.decimal_places)
-        return float(value or 0.0)
+            value = record[self.currency_field].round(value)
+        return value
 
     def convert_to_read(self, value, record, use_name_get=True):
-        # float_precision values are not supported in pure XMLRPC
-        return float(value)
+        return value
 
     def convert_to_write(self, value, record):
         return value
@@ -1391,15 +1403,11 @@ class Char(_String):
 
     def _setup_regular_base(self, model):
         super(Char, self)._setup_regular_base(model)
-        assert isinstance(self.size, (NoneType, int)), \
+        assert self.size is None or isinstance(self.size, int), \
             "Char field %s with non-integer size %r" % (self, self.size)
 
-    def convert_to_column(self, value, record):
-        #TODO:
-        # * we need to remove the "value==False" from the next line BUT
-        #   for now too many things rely on this broken behavior
-        # * the value==None test should be common to all data types
-        if value is None or value == False:
+    def convert_to_column(self, value, record, values=None):
+        if value is None or value is False:
             return None
         # we need to convert the string to a unicode object to be able
         # to evaluate its length (and possibly truncate it) reliably
@@ -1463,7 +1471,7 @@ class Html(_String):
     _description_strip_style = property(attrgetter('strip_style'))
     _description_strip_classes = property(attrgetter('strip_classes'))
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         if value is None or value is False:
             return None
         if self.sanitize:
@@ -1644,7 +1652,7 @@ class Binary(Field):
 
     _description_attachment = property(attrgetter('attachment'))
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         # Binary values may be byte strings (python 2.6 byte array), but
         # the legacy OpenERP convention is to transfer and store binaries
         # as base64-encoded strings. The base64 string may be provided as a
@@ -1656,7 +1664,7 @@ class Binary(Field):
     def convert_to_cache(self, value, record, validate=True):
         if isinstance(value, buffer):
             return str(value)
-        if isinstance(value, (int, long)) and \
+        if isinstance(value, pycompat.integer_types) and \
                 (record._context.get('bin_size') or
                  record._context.get('bin_size_' + self.name)):
             # If the client requests only the size of the field, we return that
@@ -1756,7 +1764,7 @@ class Selection(Field):
             if 'selection_add' in field.args:
                 # use an OrderedDict to update existing values
                 selection_add = field.args['selection_add']
-                self.selection = OrderedDict(self.selection + selection_add).items()
+                self.selection = list(pycompat.items(OrderedDict(self.selection + selection_add)))
 
     def _description_selection(self, env):
         """ return the selection list (pairs (value, label)); labels are
@@ -1804,7 +1812,7 @@ class Selection(Field):
                 return item[1]
         return False
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         """ Convert ``value`` from the ``write`` format to the SQL format. """
         if value is None or value is False:
             return None
@@ -1935,7 +1943,7 @@ class Many2one(_Relational):
         super(Many2one, self)._setup_attrs(model, name)
         # determine self.delegate
         if not self.delegate:
-            self.delegate = name in model._inherits.values()
+            self.delegate = name in pycompat.values(model._inherits)
 
     def update_db(self, model, columns):
         comodel = model.env[self.comodel_name]
@@ -1971,7 +1979,7 @@ class Many2one(_Relational):
         """
         records._cache[self] = self.convert_to_cache(value, records, validate=False)
 
-    def convert_to_column(self, value, record):
+    def convert_to_column(self, value, record, values=None):
         return value or None
 
     def convert_to_cache(self, value, record, validate=True):

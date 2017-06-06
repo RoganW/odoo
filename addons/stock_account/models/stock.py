@@ -5,7 +5,7 @@ from collections import defaultdict
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-from odoo.tools import float_compare, float_round
+from odoo.tools import float_compare, float_round, pycompat
 
 import logging
 _logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class StockQuant(models.Model):
             quant_cost_qty[quant.cost] += quant.qty
 
         AccountMove = self.env['account.move']
-        for cost, qty in quant_cost_qty.iteritems():
+        for cost, qty in pycompat.items(quant_cost_qty):
             move_lines = move._prepare_account_move_line(qty, cost, credit_account_id, debit_account_id)
             if move_lines:
                 date = self._context.get('force_period_date', fields.Date.context_today(self))
@@ -178,6 +178,12 @@ class StockMove(models.Model):
 
     to_refund = fields.Boolean(string="To Refund (update SO/PO)",
                                help='Trigger a decrease of the delivered/received quantity in the associated Sale Order/Purchase Order')
+
+    def _set_default_price_moves(self):
+        # When the cost method is in real or average price, the price can be set to 0.0 on the PO
+        # So the price doesn't have to be updated
+        moves = super(StockMove, self)._set_default_price_moves()
+        return moves.filtered(lambda m: m.product_id.cost_method not in ('real', 'average'))
 
     @api.multi
     def action_done(self):

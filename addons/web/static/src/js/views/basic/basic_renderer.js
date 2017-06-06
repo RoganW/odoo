@@ -16,12 +16,7 @@ var qweb = core.qweb;
 
 var BasicRenderer = AbstractRenderer.extend({
     custom_events: {
-        /**
-         * All basic renderers should be able to handle widget navigation
-         * through the TAB key.
-         */
-        move_next: '_onMoveNext',
-        move_previous: '_onMovePrevious',
+        navigation_move: '_onNavigationMove',
     },
     /**
      * Basic renderers implements the concept of "mode", they can either be in
@@ -34,6 +29,42 @@ var BasicRenderer = AbstractRenderer.extend({
         this.activeActions = params.activeActions;
         this.viewType = params.viewType;
         this.mode = params.mode || 'readonly';
+    },
+    /**
+     * This method has two responsabilities: find every invalid fields in the
+     * current view, and making sure that they are displayed as invalid, by
+     * toggling the o_form_invalid css class. It has to be done both on the
+     * widget, and on the label, if any.
+     *
+     * @param {string} recordID
+     * @returns {string[]} the list of invalid field names
+     */
+    canBeSaved: function (recordID) {
+        var self = this;
+        var invalidFields = [];
+        _.each(this.allFieldWidgets[recordID], function (widget) {
+            var canBeSaved = self._canWidgetBeSaved(widget);
+            if (!canBeSaved) {
+                invalidFields.push(widget.name);
+            }
+            widget.$el.toggleClass('o_field_invalid', !canBeSaved);
+        });
+        return invalidFields;
+    },
+    /**
+     * Calls 'commitChanges' on all field widgets, so that they can notify the
+     * environment with their current value (useful for widgets that can't
+     * detect when their value changes or that have to validate their changes
+     * before notifying them).
+     *
+     * @param {string} recordID
+     * @return {Deferred}
+     */
+    commitChanges: function (recordID) {
+        var defs = _.map(this.allFieldWidgets[recordID], function (widget) {
+            return widget.commitChanges();
+        });
+        return $.when.apply($, defs);
     },
     /**
      * Updates the internal state of the renderer to the new state. By default,
@@ -60,7 +91,7 @@ var BasicRenderer = AbstractRenderer.extend({
 
         var record = state.id === id ? state : _.findWhere(state.data, {id: id});
         if (!record) {
-            return this._render();
+            return this._render().then(_.constant([]));
         }
 
         var defs = [];
@@ -112,32 +143,45 @@ var BasicRenderer = AbstractRenderer.extend({
     },
     /**
      * Activates the widget at the given index for the given record if possible
-     * or the "next" possible one.
+     * or the "next" possible one. Usually, a widget can be activated if it is
+     * in edit mode, and if it is visible.
      *
      * @private
      * @param {Object} record
      * @param {integer} currentIndex
-     * @param {integer} [inc=1] - the increment to use when searching for the
-     *                          "next" possible one
+     * @param {Object} [options]
+     * @param {integer} [options.inc=1] - the increment to use when searching for the
+     *   "next" possible one
+     * @param {boolean} [options.wrap=true] if true, when we arrive at the end of the
+     *   list of widget, we wrap around and try to activate widgets starting at
+     *   the beginning. Otherwise, we just stop trying and return -1
      * @returns {integer} the index of the widget that was activated or -1 if
-     *                    none was possible to activate
+     *   none was possible to activate
      */
-    _activateFieldWidget: function (record, currentIndex, inc) {
-        inc = inc === undefined ? 1 : inc;
+    _activateFieldWidget: function (record, currentIndex, options) {
+        options = options || {};
+        _.defaults(options, {inc: 1, wrap: true});
 
-        var activated;
         var recordWidgets = this.allFieldWidgets[record.id] || [];
         for (var i = 0 ; i < recordWidgets.length ; i++) {
-            activated = recordWidgets[currentIndex].activate();
+            var activated = recordWidgets[currentIndex].activate({event: options.event});
             if (activated) {
                 return currentIndex;
             }
 
-            currentIndex += inc;
+            currentIndex += options.inc;
             if (currentIndex >= recordWidgets.length) {
-                currentIndex -= recordWidgets.length;
+                if (options.wrap) {
+                    currentIndex -= recordWidgets.length;
+                } else {
+                    return -1;
+                }
             } else if (currentIndex < 0) {
-                currentIndex += recordWidgets.length;
+                if (options.wrap) {
+                    currentIndex += recordWidgets.length;
+                } else {
+                    return -1;
+                }
             }
         }
         return -1;
@@ -153,7 +197,7 @@ var BasicRenderer = AbstractRenderer.extend({
      */
     _activateNextFieldWidget: function (record, currentIndex) {
         currentIndex = (currentIndex + 1) % (this.allFieldWidgets[record.id] || []).length;
-        return this._activateFieldWidget(record, currentIndex, +1);
+        return this._activateFieldWidget(record, currentIndex, {inc: 1});
     },
     /**
      * This is a wrapper of the {@see _activateFieldWidget} function to select
@@ -166,7 +210,7 @@ var BasicRenderer = AbstractRenderer.extend({
      */
     _activatePreviousFieldWidget: function (record, currentIndex) {
         currentIndex = currentIndex ? (currentIndex - 1) : ((this.allFieldWidgets[record.id] || []).length - 1);
-        return this._activateFieldWidget(record, currentIndex, -1);
+        return this._activateFieldWidget(record, currentIndex, {inc:-1});
     },
     /**
      * Does the necessary DOM updates to match the given modifiers data. The
@@ -201,9 +245,9 @@ var BasicRenderer = AbstractRenderer.extend({
             }
 
             // Toggle modifiers CSS classes if necessary
-            element.$el.toggleClass("o_form_invisible", !!modifiers.invisible);
-            element.$el.toggleClass("o_readonly", !!modifiers.readonly);
-            element.$el.toggleClass("o_form_required", !!modifiers.required);
+            element.$el.toggleClass("o_invisible_modifier", !!modifiers.invisible);
+            element.$el.toggleClass("o_readonly_modifier", !!modifiers.readonly);
+            element.$el.toggleClass("o_required_modifier", !!modifiers.required);
 
             // Call associated callback
             if (element.callback) {
@@ -222,30 +266,7 @@ var BasicRenderer = AbstractRenderer.extend({
      */
     _canWidgetBeSaved: function (widget) {
         var modifiers = this._getEvaluatedModifiers(widget.__node, widget.record);
-        var isSetOrNotRequired = (widget.isSet() || !modifiers.required);
-        var isValid = widget.isValid();
-        if (isValid instanceof $.Deferred) {
-            return isValid.then(function (isValid) {
-                return isValid && isSetOrNotRequired;
-            });
-        }
-        return isValid && isSetOrNotRequired;
-    },
-    /**
-     * Updates the modifiers evaluation associated to a given modifiers data and
-     * a given record. This only updates the modifiers values. To see associated
-     * DOM updates: @see _updateAllModifiers @see _applyModifiers.
-     *
-     * @private
-     * @param {Object} modifiersData
-     * @param {Object} record
-     */
-    _computeModifiers: function (modifiersData, record) {
-        var evalContext = record.getEvalContext();
-        modifiersData.evaluatedModifiers[record.id]
-            = _.mapObject(modifiersData.modifiers, function (modifier) {
-                return new Domain(modifier, evalContext).compute(evalContext);
-            });
+        return widget.isValid() && (widget.isSet() || !modifiers.required);
     },
     /**
      * Destroys a given widget associated to the given record and removes it
@@ -305,7 +326,6 @@ var BasicRenderer = AbstractRenderer.extend({
      *   record. This allows nodes that will produce an AbstractField instance
      *   to have their modifiers registered before this field creation as we
      *   need the readonly modifier to be able to instantiate the AbstractField.
-     *   (@see _computeModifiers).
      *
      * - On additional registrations, if the node was already registered but the
      *   record is different, we evaluate the modifiers for this record and
@@ -362,7 +382,7 @@ var BasicRenderer = AbstractRenderer.extend({
 
         // Evaluate if necessary
         if (!modifiersData.evaluatedModifiers[record.id]) {
-            this._computeModifiers(modifiersData, record);
+            modifiersData.evaluatedModifiers[record.id] = record.evalModifiers(modifiersData.modifiers);
         }
 
         // Element might not be given yet (a second call to the function can
@@ -454,7 +474,15 @@ var BasicRenderer = AbstractRenderer.extend({
         // Update the modifiers registration by associating the widget and by
         // giving the modifiers options now (as the potential callback is
         // associated to new widget)
-        this._registerModifiers(node, record, widget, modifiersOptions);
+        this._registerModifiers(node, record, widget, _.extend({
+            callback: (function (element, modifiers, record) {
+                element.$el.toggleClass('o_field_empty', !!(
+                    record.data.id
+                    && (modifiers.readonly || this.mode === 'readonly')
+                    && !element.widget.isSet()
+                ));
+            }).bind(this),
+        }, modifiersOptions || {}));
 
         return widget;
     },
@@ -524,7 +552,6 @@ var BasicRenderer = AbstractRenderer.extend({
      * 2) Updates the rendering of the view elements associated to the given
      *    record to match the new modifiers.
      *
-     * @see _computeModifiers
      * @see _applyModifiers
      *
      * @private
@@ -537,7 +564,7 @@ var BasicRenderer = AbstractRenderer.extend({
         var defs = [];
         this.defs = defs; // Potentially filled by widget rerendering
         _.each(this.allModifiersData, function (modifiersData) {
-            self._computeModifiers(modifiersData, record);
+            modifiersData.evaluatedModifiers[record.id] = record.evalModifiers(modifiersData.modifiers);
             self._applyModifiers(modifiersData, record);
         });
         delete this.defs;
@@ -550,24 +577,15 @@ var BasicRenderer = AbstractRenderer.extend({
     //--------------------------------------------------------------------------
 
     /**
-     * When someone presses TAB in a widget, it is nice to be able to go to the
-     * next widget, especially since the TAB key event is preventDefaulted
+     * When someone presses the TAB/UP/DOWN/... key in a widget, it is nice to
+     * be able to navigate in the view (default browser behaviors are disabled
+     * by Odoo).
      *
      * @abstract
      * @private
      * @param {OdooEvent} ev
      */
-    _onMoveNext: function (ev) {},
-    /**
-     * When someone presses SHIFT+TAB in a widget, it is nice to be able to go
-     * back to the previous widget, especially since the TAB key event is
-     * preventDefaulted
-     *
-     * @abstract
-     * @private
-     * @param {OdooEvent} ev
-     */
-    _onMovePrevious: function (ev) {},
+    _onNavigationMove: function (ev) {},
 });
 
 return BasicRenderer;

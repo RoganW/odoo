@@ -5,42 +5,43 @@
 """
 Miscellaneous tools used by OpenERP.
 """
-
 from functools import wraps
 import babel
-import cPickle
-import cProfile
 from contextlib import contextmanager
 import datetime
 import subprocess
-import logging
+import io
 import os
 import passlib.utils
+import pickle as pickle_
 import re
 import socket
 import sys
 import threading
 import time
+import types
 import werkzeug.utils
 import zipfile
-from cStringIO import StringIO
 from collections import defaultdict, Iterable, Mapping, MutableSet, OrderedDict
-from itertools import islice, izip, groupby, repeat
+from itertools import islice, groupby, repeat
 from lxml import etree
-from which import which
-from threading import local
+
+from .which import which
 import traceback
 import csv
 from operator import itemgetter
 
 try:
-    from html2text import html2text
+    # pylint: disable=bad-python3-import
+    import cProfile
 except ImportError:
-    html2text = None
+    import profile as cProfile
 
-from config import config
-from cache import *
+
+from .config import config
+from .cache import *
 from .parse_version import parse_version 
+from . import pycompat
 
 import odoo
 # get_encodings, ustr and exception_to_unicode were originally from tools.misc.
@@ -143,7 +144,6 @@ def file_open(name, mode="r", subdir='addons', pathinfo=False):
     
     >>> file_open('hr/report/timesheer.xsl')
     >>> file_open('addons/hr/report/timesheet.xsl')
-    >>> file_open('../../base/report/rml_template.xsl', subdir='addons/hr/report', pathinfo=True)
 
     @param name name of the file
     @param mode file open mode
@@ -198,7 +198,16 @@ def file_open(name, mode="r", subdir='addons', pathinfo=False):
 
 
 def _fileopen(path, mode, basedir, pathinfo, basename=None):
-    name = os.path.normpath(os.path.join(basedir, path))
+    name = os.path.normpath(os.path.normcase(os.path.join(basedir, path)))
+
+    import odoo.modules as addons
+    paths = addons.module.ad_paths + [config['root_path']]
+    for addons_path in paths:
+        addons_path = os.path.normpath(os.path.normcase(addons_path)) + os.sep
+        if name.startswith(addons_path):
+            break
+    else:
+        raise ValueError("Unknown path: %s" % name)
 
     if basename is None:
         basename = name
@@ -225,10 +234,9 @@ def _fileopen(path, mode, basedir, pathinfo, basename=None):
             zipname = tail
         zpath = os.path.join(basedir, head + '.zip')
         if zipfile.is_zipfile(zpath):
-            from cStringIO import StringIO
             zfile = zipfile.ZipFile(zpath)
             try:
-                fo = StringIO()
+                fo = io.BytesIO()
                 fo.write(zfile.read(os.path.join(
                     os.path.basename(head), zipname).replace(
                         os.sep, '/')))
@@ -273,13 +281,13 @@ def flatten(list):
     r = []
     for e in list:
         if isiterable(e):
-            map(r.append, flatten(e))
+            r.extend(flatten(e))
         else:
             r.append(e)
     return r
 
 def reverse_enumerate(l):
-    """Like enumerate but in the other sens
+    """Like enumerate but in the other direction
     
     Usage::
     >>> a = ['a', 'b', 'c']
@@ -295,7 +303,7 @@ def reverse_enumerate(l):
       File "<stdin>", line 1, in <module>
     StopIteration
     """
-    return izip(xrange(len(l)-1, -1, -1), reversed(l))
+    return pycompat.izip(range(len(l)-1, -1, -1), reversed(l))
 
 def partition(pred, elems):
     """ Return a pair equivalent to:
@@ -328,10 +336,12 @@ def topological_sort(elems):
             visited.add(n)
             if n in elems:
                 # first visit all dependencies of n, then append n to result
-                map(visit, elems[n])
+                for it in elems[n]:
+                    visit(it)
                 result.append(n)
 
-    map(visit, elems)
+    for el in elems:
+        visit(el)
 
     return result
 
@@ -449,7 +459,7 @@ def logged(f):
         vector = ['Call -> function: %r' % f]
         for i, arg in enumerate(args):
             vector.append('  arg %02d: %s' % (i, pformat(arg)))
-        for key, value in kwargs.items():
+        for key, value in pycompat.items(kwargs):
             vector.append('  kwarg %10s: %s' % (key, pformat(value)))
 
         timeb4 = time.time()
@@ -514,9 +524,9 @@ def detect_ip_addr():
 
             # try 32 bit kernel:
             if ip_addr is None:
-                ifaces = filter(None, [namestr[i:i+32].split('\0', 1)[0] for i in range(0, outbytes, 32)])
+                ifaces = [namestr[i:i+32].split('\0', 1)[0] for i in range(0, outbytes, 32)]
 
-                for ifname in [iface for iface in ifaces if iface != 'lo']:
+                for ifname in [iface for iface in ifaces if iface if iface != 'lo']:
                     ip_addr = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, pack('256s', ifname[:15]))[20:24])
                     break
 
@@ -654,37 +664,17 @@ def posix_to_ldml(fmt, locale):
 def split_every(n, iterable, piece_maker=tuple):
     """Splits an iterable into length-n pieces. The last piece will be shorter
        if ``n`` does not evenly divide the iterable length.
-       @param ``piece_maker``: function to build the pieces
-       from the slices (tuple,list,...)
+       
+       :param int n: maximum size of each generated chunk
+       :param Iterable iterable: iterable to chunk into pieces
+       :param piece_maker: callable taking an iterable and collecting each 
+                           chunk from its slice, *must consume the entire slice*.
     """
     iterator = iter(iterable)
     piece = piece_maker(islice(iterator, n))
     while piece:
         yield piece
         piece = piece_maker(islice(iterator, n))
-
-if __name__ == '__main__':
-    import doctest
-    doctest.testmod()
-
-class upload_data_thread(threading.Thread):
-    def __init__(self, email, data, type):
-        self.args = [('email',email),('type',type),('data',data)]
-        super(upload_data_thread,self).__init__()
-    def run(self):
-        try:
-            import urllib
-            args = urllib.urlencode(self.args)
-            fp = urllib.urlopen('http://www.openerp.com/scripts/survey.php', args)
-            fp.read()
-            fp.close()
-        except Exception:
-            pass
-
-def upload_data(email, data, type='SURVEY'):
-    a = upload_data_thread(email, data, type)
-    a.start()
-    return True
 
 def get_and_group_by_field(cr, uid, obj, ids, field, context=None):
     """ Read the values of ``field´´ for the given ``ids´´ and group ids by value.
@@ -897,7 +887,7 @@ def dumpstacks(sig=None, frame=None):
                                'uid': getattr(th, 'uid', 'n/a'),
                                'dbname': getattr(th, 'dbname', 'n/a')}
                     for th in threading.enumerate()}
-    for threadId, stack in sys._current_frames().items():
+    for threadId, stack in pycompat.items(sys._current_frames()):
         thread_info = threads_info.get(threadId, {})
         code.append("\n# Thread: %s (id:%s) (db:%s) (uid:%s)" %
                     (thread_info.get('name', 'n/a'),
@@ -927,7 +917,7 @@ def freehash(arg):
         if isinstance(arg, Mapping):
             return hash(frozendict(arg))
         elif isinstance(arg, Iterable):
-            return hash(frozenset(map(freehash, arg)))
+            return hash(frozenset(freehash(item) for item in arg))
         else:
             return id(arg)
 
@@ -948,7 +938,7 @@ class frozendict(dict):
     def update(self, *args, **kwargs):
         raise NotImplementedError("'update' not supported on frozendict")
     def __hash__(self):
-        return hash(frozenset((key, freehash(val)) for key, val in self.iteritems()))
+        return hash(frozenset((key, freehash(val)) for key, val in pycompat.items(self)))
 
 class Collector(Mapping):
     """ A mapping from keys to lists. This is essentially a space optimization
@@ -989,6 +979,39 @@ class LastOrderedSet(OrderedSet):
     def add(self, elem):
         OrderedSet.discard(self, elem)
         OrderedSet.add(self, elem)
+
+def unique(it):
+    """ "Uniquifier" for the provided iterable: will output each element of
+    the iterable once.
+
+    The iterable's elements must be hashahble.
+
+    :param Iterable it:
+    :rtype: Iterator
+    """
+    seen = set()
+    for e in it:
+        if e not in seen:
+            seen.add(e)
+            yield e
+
+class Reverse(object):
+    """ Wraps a value and reverses its ordering, useful in key functions when
+    mixing ascending and descending sort on non-numeric data as the
+    ``reverse`` parameter can not do piecemeal reordering.
+    """
+    __slots__ = ['val']
+
+    def __init__(self, val):
+        self.val = val
+
+    def __eq__(self, other): return self.val == other.val
+    def __ne__(self, other): return self.val != other.val
+
+    def __ge__(self, other): return self.val <= other.val
+    def __gt__(self, other): return self.val < other.val
+    def __le__(self, other): return self.val >= other.val
+    def __lt__(self, other): return self.val > other.val
 
 @contextmanager
 def ignore(*exc):
@@ -1077,27 +1100,22 @@ def format_date(env, value, lang_code=False, date_format=False):
 def _consteq(str1, str2):
     """ Constant-time string comparison. Suitable to compare bytestrings of fixed,
         known length only, because length difference is optimized. """
-    return len(str1) == len(str2) and sum(ord(x)^ord(y) for x, y in zip(str1, str2)) == 0
+    return len(str1) == len(str2) and sum(ord(x)^ord(y) for x, y in pycompat.izip(str1, str2)) == 0
 
 consteq = getattr(passlib.utils, 'consteq', _consteq)
 
-class Pickle(object):
-    @classmethod
-    def load(cls, stream, errors=False):
-        unpickler = cPickle.Unpickler(stream)
-        # pickle builtins: str/unicode, int/long, float, bool, tuple, list, dict, None
-        unpickler.find_global = None
-        try:
-            return unpickler.load()
-        except Exception:
-            _logger.warning('Failed unpickling data, returning default: %r', errors, exc_info=True)
-            return errors
-
-    @classmethod
-    def loads(cls, text):
-        return cls.load(StringIO(text))
-
-    dumps = cPickle.dumps
-    dump = cPickle.dump
-
-pickle = Pickle
+def _pickle_load(stream, errors=False):
+    unpickler = pickle_.Unpickler(stream)
+    # pickle builtins: str/unicode, int/long, float, bool, tuple, list, dict, None
+    unpickler.find_global = None
+    try:
+        return unpickler.load()
+    except Exception:
+        _logger.warning('Failed unpickling data, returning default: %r',
+                        errors, exc_info=True)
+        return errors
+pickle = types.ModuleType(__name__ + '.pickle')
+pickle.load = _pickle_load
+pickle.loads = lambda text: _pickle_load(io.BytesIO(text))
+pickle.dump = pickle_.dump
+pickle.dumps = pickle_.dumps

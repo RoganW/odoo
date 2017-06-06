@@ -102,6 +102,17 @@ var AbstractView = Class.extend({
         if (params.modelName) {
             this.loadParams.modelName = params.modelName;
         }
+        // default_order is like:
+        //   'name,id desc'
+        // but we need it like:
+        //   [{name: 'id', asc: false}, {name: 'name', asc: true}]
+        var defaultOrder = viewInfo.arch.attrs.default_order;
+        if (defaultOrder) {
+            this.loadParams.orderedBy = _.map(defaultOrder.split(','), function (order) {
+                order = order.trim().split(' ');
+                return {name: order[0], asc: order[1] !== 'desc'};
+            });
+        }
 
         this.userContext = params.userContext;
     },
@@ -185,8 +196,24 @@ var AbstractView = Class.extend({
      */
     _loadLibs: function () {
         var defs = [];
-        _.each(this.config.js_libs, function (url) {
-            defs.push(ajax.loadJS(url));
+        var jsDefs;
+        _.each(this.config.js_libs, function (urls) {
+            if (typeof(urls) === 'string') {
+                // js_libs is an array of urls: those urls can be loaded in
+                // parallel
+                defs.push(ajax.loadJS(urls));
+            } else {
+                // js_libs is an array of arrays of urls: those arrays of urls
+                // must be loaded sequentially, but the urls inside each
+                // sub-array can be loaded in parallel
+                defs.push($.when.apply($, jsDefs).then(function () {
+                    jsDefs = [];
+                    _.each(urls, function (url) {
+                        jsDefs.push(ajax.loadJS(url));
+                    });
+                    return $.when.apply($, jsDefs);
+                }));
+            }
         });
         _.each(this.config.css_libs, function (url) {
             defs.push(ajax.loadCSS(url));

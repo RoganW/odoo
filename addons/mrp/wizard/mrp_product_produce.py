@@ -29,7 +29,7 @@ class MrpProductProduce(models.TransientModel):
             lines = []
             existing_lines = []
             for move in production.move_raw_ids.filtered(lambda x: (x.product_id.tracking != 'none') and x.state not in ('done', 'cancel')):
-                if not move.move_lot_ids:
+                if not move.move_lot_ids.filtered(lambda x: not x.lot_produced_id):
                     qty = quantity / move.bom_line_id.bom_id.product_qty * move.bom_line_id.product_qty
                     if move.product_id.tracking == 'serial':
                         while float_compare(qty, 0.0, precision_rounding=move.product_uom.rounding) > 0:
@@ -59,7 +59,7 @@ class MrpProductProduce(models.TransientModel):
             res['product_qty'] = quantity
             res['product_id'] = production.product_id.id
             res['product_uom_id'] = production.product_uom_id.id
-            res['consume_line_ids'] = map(lambda x: (0,0,x), lines) + map(lambda x:(4, x), existing_lines)
+            res['consume_line_ids'] = [(0,0,x) for x in lines] + [(4, x) for x in existing_lines]
         return res
 
     serial = fields.Boolean('Requires Serial')

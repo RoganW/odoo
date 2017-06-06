@@ -16,11 +16,15 @@ condition/math builtins.
 #  - safe_eval in tryton http://hg.tryton.org/hgwebdir.cgi/trytond/rev/bbb5f73319ad
 
 from opcode import HAVE_ARGUMENT, opmap
+
+import functools
 from psycopg2 import OperationalError
 from types import CodeType
 import logging
+import sys
 import werkzeug
 
+from . import pycompat
 from .misc import ustr
 
 import odoo
@@ -157,9 +161,8 @@ def test_expr(expr, allowed_codes, mode="eval"):
     except (SyntaxError, TypeError, ValueError):
         raise
     except Exception as e:
-        import sys
         exc_info = sys.exc_info()
-        raise ValueError, '"%s" while compiling\n%r' % (ustr(e), expr), exc_info[2]
+        pycompat.reraise(ValueError, ValueError('"%s" while compiling\n%r' % (ustr(e), expr)), exc_info[2])
     assert_valid_codeobj(allowed_codes, code_obj, expr)
     return code_obj
 
@@ -226,7 +229,6 @@ _BUILTINS = {
     'bool': bool,
     'int': int,
     'float': float,
-    'long': long,
     'enumerate': enumerate,
     'dict': dict,
     'list': list,
@@ -236,7 +238,7 @@ _BUILTINS = {
     'min': min,
     'max': max,
     'sum': sum,
-    'reduce': reduce,
+    'reduce': functools.reduce,
     'filter': filter,
     'round': round,
     'len': len,
@@ -246,11 +248,10 @@ _BUILTINS = {
     'any': any,
     'ord': ord,
     'chr': chr,
-    'cmp': cmp,
     'divmod': divmod,
     'isinstance': isinstance,
     'range': range,
-    'xrange': xrange,
+    'xrange': range,
     'zip': zip,
     'Exception': Exception,
 }
@@ -320,9 +321,8 @@ def safe_eval(expr, globals_dict=None, locals_dict=None, mode="eval", nocopy=Fal
     except odoo.exceptions.MissingError:
         raise
     except Exception as e:
-        import sys
         exc_info = sys.exc_info()
-        raise ValueError, '%s: "%s" while evaluating\n%r' % (ustr(type(e)), ustr(e), expr), exc_info[2]
+        pycompat.reraise(ValueError, ValueError('%s: "%s" while evaluating\n%r' % (ustr(type(e)), ustr(e), expr)), exc_info[2])
 def test_python_expr(expr, mode="eval"):
     try:
         test_expr(expr, _SAFE_OPCODES, mode=mode)

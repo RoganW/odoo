@@ -40,8 +40,7 @@ var KanbanController = BasicController.extend({
         this.on_create = params.on_create;
         this.hasButtons = params.hasButtons;
 
-        // true iff grouped by an m2o field and group_create action enabled
-        this.create_column_enabled = false;
+        this.createColumnEnabled = this._isCreateColumnEnabled();
     },
 
     //--------------------------------------------------------------------------
@@ -60,16 +59,12 @@ var KanbanController = BasicController.extend({
         }
     },
     /**
-     * Override update method to recompute create_column_enabled.
+     * Override update method to recompute createColumnEnabled.
      *
      * @returns {Deferred}
      */
     update: function () {
-        var state = this.model.get(this.handle, {raw: true});
-        var group_by_field = state.fields[state.groupedBy[0]];
-        var grouped_by_m2o = group_by_field && (group_by_field.type === 'many2one');
-        var groupCreate = this.is_action_enabled('group_create');
-        this.create_column_enabled = grouped_by_m2o && groupCreate;
+        this.createColumnEnabled = this._isCreateColumnEnabled();
         return this._super.apply(this, arguments);
     },
 
@@ -80,9 +75,10 @@ var KanbanController = BasicController.extend({
     /**
      * @override method comes from field manager mixin
      * @param {string} id local id from the basic record data
+     * @returns {Deferred}
      */
     _confirmSave: function (id) {
-        this.renderer.updateRecord(this.model.get(id));
+        return this.renderer.updateRecord(this.model.get(id));
     },
     /**
      * The nocontent helper should be displayed in kanban:
@@ -94,8 +90,25 @@ var KanbanController = BasicController.extend({
      */
     _hasContent: function (state) {
         return this._super.apply(this, arguments) ||
-               this.create_column_enabled ||
+               this.createColumnEnabled ||
                (state.groupedBy.length && state.data.length);
+    },
+    /**
+     * The column quick create should be displayed in kanban iff grouped by an
+     * m2o field and group_create action enabled.
+     *
+     * @returns {boolean}
+     */
+    _isCreateColumnEnabled: function () {
+        var groupCreate = this.is_action_enabled('group_create');
+        if (!groupCreate) {
+            // pre-return to avoid a lot of the following processing
+            return false;
+        }
+        var state = this.model.get(this.handle, {raw: true});
+        var groupByField = state.fields[state.groupedBy[0]];
+        var groupedByM2o = groupByField && (groupByField.type === 'many2one');
+        return groupedByM2o;
     },
     /**
      * This method calls the server to ask for a resequence.  Note that this
@@ -118,10 +131,11 @@ var KanbanController = BasicController.extend({
     _updateButtons: function () {
         if (this.$buttons) {
             var data = this.model.get(this.handle, {raw: true});
-            var create_muted = data.count === 0 && this.create_column_enabled;
+            var grouped = data.groupedBy.length;
+            var createMuted = grouped && data.data.length === 0 && this.createColumnEnabled;
             this.$buttons.find('.o-kanban-button-new')
-                .toggleClass('btn-primary', !create_muted)
-                .toggleClass('btn-default', create_muted);
+                .toggleClass('btn-primary', !createMuted)
+                .toggleClass('btn-default', createMuted);
         }
     },
     /**
@@ -151,6 +165,7 @@ var KanbanController = BasicController.extend({
         var self = this;
         this.model.createGroup(event.data.value, this.handle).then(function () {
             self.update({}, {reload: false});
+            self._updateButtons();
             self.trigger_up('scrollTo', {selector: '.o_column_quick_create'});
         });
     },
@@ -207,7 +222,7 @@ var KanbanController = BasicController.extend({
         var state = this.model.get(this.handle, {raw: true});
         var relatedModelName = state.fields[state.groupedBy[0]].relation;
         this.model
-            .deleteRecords([column.db_id], relatedModelName, this.handle)
+            .deleteRecords([column.db_id], relatedModelName)
             .done(function () {
                 if (column.isEmpty()) {
                     self.renderer.removeWidget(column);
@@ -218,23 +233,12 @@ var KanbanController = BasicController.extend({
             });
     },
     /**
-     * This method comes from the field manager mixin.  Since there is no
-     * onchange for kanban, we force a save for every change
-     *
-     * @override
-     * @param {OdooEvent} event
-     */
-    _onFieldChanged: function (event) {
-        event.data.force_save = true;
-        this._super.apply(this, arguments);
-    },
-    /**
      * @param {OdooRevent} event
      */
     _onLoadMore: function (event) {
         var self = this;
         var column = event.target;
-        this.model.load_more(column.db_id).then(function (db_id) {
+        this.model.loadMore(column.db_id).then(function (db_id) {
             var data = self.model.get(db_id);
             self.renderer.updateColumn(db_id, data);
         });
@@ -257,8 +261,8 @@ var KanbanController = BasicController.extend({
         this.trigger_up('execute_action', {
             action_data: attrs,
             model: record.model,
-            record_id: record.res_id,
-            on_close: function () {
+            res_ids: [record.res_id],
+            on_closed: function () {
                 self.model.reload(record.id).then(function (db_id) {
                     var data = self.model.get(db_id);
                     var kanban_record = event.target;
@@ -325,6 +329,7 @@ var KanbanController = BasicController.extend({
             return self.model
                 .addRecordToGroup(columnState.id, records[0])
                 .then(function (db_id) {
+                    self._updateEnv();
                     column.addRecord(self.model.get(db_id), {position: 'before'});
                 });
         }

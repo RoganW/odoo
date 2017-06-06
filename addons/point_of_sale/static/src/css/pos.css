@@ -631,7 +631,7 @@ td {
     margin-right: 0;
     text-align: center;
     vertical-align: top;
-    width: 188px;
+    width: 186px;
     border: none;
     border-radius: 0;
     border-top: 1px solid;
@@ -770,6 +770,11 @@ td {
     background: #6EC89B;
     color: white;
     border-color: transparent;
+}
+.pos .numpad .disabled-mode, .pos .numpad .disabled-mode:hover {
+    background: #c7c7c7;
+    color: #a5a1a1;
+    cursor: not-allowed;
 }
 
 /*  ********* The right pane contains the screens and headers ********* */

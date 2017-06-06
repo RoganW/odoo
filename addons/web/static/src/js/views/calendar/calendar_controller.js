@@ -19,9 +19,6 @@ var _t = core._t;
 var QWeb = core.qweb;
 
 var CalendarController = AbstractController.extend({
-    defaults: _.extend({}, AbstractController.prototype.defaults, {
-        confirm_on_delete: true,
-    }),
     custom_events: _.extend({}, AbstractController.prototype.custom_events, {
         quickCreate: '_onQuickCreate',
         openCreate: '_onOpenCreate',
@@ -42,9 +39,9 @@ var CalendarController = AbstractController.extend({
     init: function (parent, model, renderer, params) {
         this._super.apply(this, arguments);
         this.current_start = null;
-        this.quick_add_pop = params.quick_add_pop;
-        this.disable_quick_create = params.disable_quick_create;
-        this.confirm_on_delete = params.confirm_on_delete;
+        this.quickAddPop = params.quickAddPop;
+        this.disableQuickCreate = params.disableQuickCreate;
+        this.eventOpenPopup = params.eventOpenPopup;
         this.formViewId = params.formViewId;
         this.readonlyFormViewId = params.readonlyFormViewId;
         this.mapping = params.mapping;
@@ -100,9 +97,10 @@ var CalendarController = AbstractController.extend({
     /**
      * @param {Object} record
      * @param {integer} record.id
+     * @returns {Deferred}
      */
     _updateRecord: function (record) {
-        this.model.updateRecord(record).then(this.reload.bind(this));
+        return this.model.updateRecord(record).then(this.reload.bind(this));
     },
 
     //--------------------------------------------------------------------------
@@ -155,7 +153,7 @@ var CalendarController = AbstractController.extend({
                 self.reload(id);
             }, function () {
                 // This will occurs if there are some more fields required
-                event.data.options.disable_quick_create = true;
+                event.data.options.disableQuickCreate = true;
                 event.data.data.on_save = self.quick.destroy.bind(self.quick);
                 self._onOpenCreate(event.data);
             });
@@ -172,12 +170,12 @@ var CalendarController = AbstractController.extend({
 
         var context = _.extend({}, this.context, event.options && event.options.context);
         context.default_name = data.name || null;
-        context['default_' + this.mapping.date_start] = data.start || null;
+        context['default_' + this.mapping.date_start] = data[this.mapping.date_start] || null;
         if (this.mapping.date_stop) {
-            context['default_' + this.mapping.date_stop] = data.stop || null;
+            context['default_' + this.mapping.date_stop] = data[this.mapping.date_stop] || null;
         }
         if (this.mapping.date_delay) {
-            context['default_' + this.mapping.date_delay] = data.duration || null;
+            context['default_' + this.mapping.date_delay] = data[this.mapping.date_delay] || null;
         }
         if (this.mapping.all_day) {
             context['default_' + this.mapping.all_day] = data[this.mapping.all_day] || null;
@@ -191,11 +189,12 @@ var CalendarController = AbstractController.extend({
 
         var options = _.extend({}, this.options, event.options, {context: context});
 
-        if(!options.disable_quick_create && !event.data.disable_quick_create && this.quick_add_pop) {
-            if (this.quick != null) {
-                this.quick.destroy();
-                this.quick = null;
-            }
+        if (this.quick != null) {
+            this.quick.destroy();
+            this.quick = null;
+        }
+
+        if(!options.disableQuickCreate && !event.data.disableQuickCreate && this.quickAddPop) {
             this.quick = new QuickCreate(this, true, options, data, event.data);
             this.quick.on('added', this, this.reload.bind(this));
             this.quick.open();
@@ -207,18 +206,28 @@ var CalendarController = AbstractController.extend({
         if (this.renderer.arch.attrs.string) {
             title += ': ' + this.renderer.arch.attrs.string;
         }
-        new dialogs.FormViewDialog(self, {
-            res_model: this.modelName,
-            context: context,
-            title: title,
-            disable_multiple_selection: true,
-            on_saved: function () {
-                if (event.data.on_save) {
-                    event.data.on_save();
-                }
-                self.reload();
-            },
-        }).open();
+        if (this.eventOpenPopup) {
+            new dialogs.FormViewDialog(self, {
+                res_model: this.modelName,
+                context: context,
+                title: title,
+                disable_multiple_selection: true,
+                on_saved: function () {
+                    if (event.data.on_save) {
+                        event.data.on_save();
+                    }
+                    self.reload();
+                },
+            }).open();
+        } else {
+            this.do_action({
+                type: 'ir.actions.act_window',
+                res_model: this.modelName,
+                views: [[this.formViewId || false, 'form']],
+                target: 'current',
+                context: context,
+            });
+        }
     },
     /**
      * @param {OdooEvent} event
@@ -227,6 +236,19 @@ var CalendarController = AbstractController.extend({
         var self = this;
         var id = event.data._id;
         id = id && parseInt(id).toString() === id ? parseInt(id) : id;
+
+        if (!this.eventOpenPopup) {
+            this.do_action({
+                type: 'ir.actions.act_window',
+                res_id: id,
+                res_model: this.modelName,
+                views: [[this.formViewId || false, 'form']],
+                target: 'current',
+                context: event.context || self.context,
+            });
+            return;
+        }
+
         var open_dialog = function (readonly) {
             var options = {
                 res_model: self.modelName,

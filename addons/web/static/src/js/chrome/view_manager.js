@@ -20,7 +20,7 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
     custom_events: {
         execute_action: function(event) {
             var data = event.data;
-            this.do_execute_action(data.action_data, data.model, data.record_id, data.on_closed)
+            this.do_execute_action(data.action_data, data.model, data.res_ids, data.on_closed)
                 .then(data.on_success, data.on_fail);
         },
         search: function(event) {
@@ -46,6 +46,7 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
         push_state: function(event) {
             this.do_push_state(event.data);
         },
+        switch_to_previous_view: '_onSwitchToPreviousView',
     },
     /**
      * Called each time the view manager is attached into the DOM
@@ -182,7 +183,9 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
             core.bus.on('clear_uncommitted_changes', self, function(chain_callbacks) {
                 chain_callbacks(function() {
                     if (self.active_view.controller) {
-                        return self.active_view.controller.canBeDiscarded();
+                        return self.active_view.controller.discardChanges(undefined, {
+                            readonlyIfRealDiscard: true,
+                        });
                     }
                 });
             });
@@ -290,7 +293,10 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
                 view.loaded = view.loaded.then(function() {
                     // By default, the view will be loaded in readonly mode
                     // Returns to this default mode if you load action from breadcrumb
-                    view_options = _.extend({mode: 'readonly'}, view_options, self.env);
+                    view_options = _.extend({}, view_options, self.env);
+                    if (view_type === 'form') {
+                        view_options.mode = view_options.mode || 'readonly';
+                    }
                     return view.controller.reload(view_options);
                 });
             }
@@ -323,7 +329,7 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
             cp_content: _.extend({}, this.searchview_elements, view_control_elements),
             hidden: this.flags.headless,
             searchview: this.searchview,
-            search_view_hidden: !this.active_view.searchable,
+            search_view_hidden: !this.active_view.searchable || this.active_view.searchview_hidden,
         };
         this.update_control_panel(cp_status);
 
@@ -350,17 +356,17 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
             callbacks: [{widget: view_controller}],
         });
     },
-    create_view: function(view, view_options) {
+    create_view: function(view_descr, view_options) {
         var self = this;
-        var arch = view.fields_view.arch;
-        var View = this.registry.get(arch.attrs.js_class || view.type);
+        var arch = view_descr.fields_view.arch;
+        var View = this.registry.get(arch.attrs.js_class || view_descr.type);
         var params = _.extend({}, view_options, {userContext: this.getSession().user_context});
-        if (view.type === "form" && ((this.action.target === 'new' || this.action.target === 'inline') ||
+        if (view_descr.type === "form" && ((this.action.target === 'new' || this.action.target === 'inline') ||
             (view_options && view_options.mode === 'edit'))) {
             params.mode = params.initial_mode || 'edit';
         }
-
-        view = new View(view.fields_view, params);
+        view_descr.searchview_hidden = View.prototype.searchview_hidden;
+        var view = new View(view_descr.fields_view, params);
         return view.getController(this).then(function(controller) {
             controller.on('history_back', this, function() {
                 if (self.action_manager) self.action_manager.trigger('history_back');
@@ -541,17 +547,18 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
      *
      * @param {Object} action_data the action descriptor data
      * @param {String} action_data.name the action name, used to uniquely identify the action to find and execute it
-     * @param {String} [action_data.special=null] special action handlers (currently: only ``'cancel'``)
+     * @param {String} [action_data.special=null] special action handlers, closes the dialog if set
      * @param {String} [action_data.type='workflow'] the action type, if present, one of ``'object'``, ``'action'`` or ``'workflow'``
      * @param {Object} [action_data.context=null] additional action context, to add to the current context
      * @param {DataSet} dataset a dataset object used to communicate with the server
-     * @param {Object} [record_id] the identifier of the object on which the action is to be applied
+     * @param {integer[]} [res_ids] the res_ids of the objects on which the action is to be applied (fallback on env.ids if not set)
      * @param {Function} on_closed callback to execute when dialog is closed or when the action does not generate any result (no new action)
      */
-    do_execute_action: function (action_data, model, record_id, on_closed) {
+    do_execute_action: function (action_data, model, res_ids, on_closed) {
         var self = this;
         var result_handler = on_closed || function () {};
         var context = new Context(this.env.context, action_data.context || {});
+        var record_id = res_ids && res_ids[0];
 
         // response handler
         var handler = function (action) {
@@ -566,10 +573,10 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
                 );
                 ncontext.add(action_data.context || {});
                 ncontext.add({active_model: self.env.modelName});
-                if (record_id) {
+                if (res_ids) {
                     ncontext.add({
                         active_id: record_id,
-                        active_ids: [record_id],
+                        active_ids: res_ids,
                     });
                 }
                 ncontext.add(action.context || {});
@@ -583,10 +590,10 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
             }
         };
 
-        if (action_data.special === 'cancel') {
+        if (action_data.special) {
             return handler({"type":"ir.actions.act_window_close"});
         } else if (action_data.type === "object") {
-            var args = record_id ? [[record_id]] : [this.env.ids];
+            var args = res_ids ? [res_ids] : [this.env.ids];
             if (action_data.args) {
                 try {
                     // Warning: quotes and double quotes problem due to json and xml clash
@@ -604,7 +611,7 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
             return data_manager.load_action(action_data.name, _.extend(pyeval.eval('context', context), {
                 active_model: this.env.modelName,
                 active_ids: this.env.ids,
-                active_id: record_id
+                active_id: record_id,
             })).then(handler);
         }
     },
@@ -616,6 +623,32 @@ var ViewManager = Widget.extend(ControlPanelMixin, {
         }
         return this._super.apply(this, arguments);
     },
+
+    //--------------------------------------------------------------------------
+    // Handlers
+    //--------------------------------------------------------------------------
+
+    /**
+     * This handler is probably called by a sub form view when the user discards
+     * its value.  The usual result of this is that we switch back to the
+     * previous view (the first in our action stack).  We do this in a really
+     * stupid way: we trigger a 'history_back' event, and the action manager
+     * will call this very view manager to activate the previous view.
+     * @todo: directly switch to previous view
+     *
+     * A special case is done in the case that there is no previous view.  When
+     * that happens, we simply rerender the current view.
+     *
+     * @private
+     */
+    _onSwitchToPreviousView: function () {
+        if (this.view_stack.length === 1) {
+            var currentView = this.view_stack[0].controller;
+            currentView.update({}, {reload: false});
+        } else {
+            this.do_action('history_back');
+        }
+    }
 });
 
 return ViewManager;

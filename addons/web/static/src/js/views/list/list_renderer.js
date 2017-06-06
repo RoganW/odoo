@@ -6,7 +6,6 @@ var config = require('web.config');
 var core = require('web.core');
 var field_utils = require('web.field_utils');
 var Pager = require('web.Pager');
-var session = require('web.session');
 var utils = require('web.utils');
 
 var _t = core._t;
@@ -50,9 +49,11 @@ var ListRenderer = BasicRenderer.extend({
         this._super.apply(this, arguments);
         var self = this;
         this.hasHandle = false;
+        this.handleField = 'sequence';
         this.columns = _.reject(this.arch.children, function (c) {
             if (c.attrs.widget === 'handle') {
                 self.hasHandle = true;
+                self.handleField = c.attrs.name;
             }
             return !!JSON.parse(c.attrs.modifiers || "{}").tree_invisible;
         });
@@ -147,50 +148,6 @@ var ListRenderer = BasicRenderer.extend({
         }
     },
     /**
-     * Each line can be decorated according to a few simple rules. The arch
-     * description of the list may have one of the decoration-X attribute with
-     * a domain as value.  Then, for each record, we check if the domain matches
-     * the record, and add the text-X css class to the element.  This method is
-     * concerned with the computation of the list of css classes for a given
-     * record.
-     *
-     * @private
-     * @param {Object} record a basic model record
-     * @returns {string[]} a list of css classes
-     */
-    _computeDecorationClassNames: function (record) {
-        var data = JSON.parse(JSON.stringify(record.data));
-        var context = _.extend({}, data, {
-            uid: session.uid,
-            current_date: moment().format('YYYY-MM-DD')
-            // TODO: time, datetime, relativedelta
-        });
-        return _.chain(this.rowDecorations)
-            .pick(function (expr) {
-                return py.PY_isTrue(py.evaluate(expr, context));
-            }).map(function (expr, decoration) {
-                return decoration.replace('decoration', 'text');
-            }).value();
-    },
-    /**
-     * When a list view is grouped, we need to display the name of each group in
-     * the 'title' row.  This is the purpose of this method.
-     *
-     * @private
-     * @param {any} value
-     * @param {Object} field a field description
-     * @returns {string}
-     */
-    _formatValue: function (value, field) {
-        if (field && field.type === 'selection') {
-            var choice = _.find(field.selection, function (c) {
-                return c[0] === value;
-            });
-            return choice[1];
-        }
-        return value || _t('Undefined');
-    },
-    /**
      * return the number of visible columns.  Note that this number depends on
      * the state of the renderer.  For example, in editable mode, it could be
      * one more that in non editable mode, because there may be a visible 'trash
@@ -219,7 +176,9 @@ var ListRenderer = BasicRenderer.extend({
                 var field = self.state.fields[column.attrs.name];
                 var value = aggregateValues[column.attrs.name].value;
                 var help = aggregateValues[column.attrs.name].help;
-                var formattedValue = field_utils.format[field.type](value, field, {});
+                var formattedValue = field_utils.format[field.type](value, field, {
+                    escape: true,
+                });
                 $cell.addClass('o_list_number').attr('title', help).html(formattedValue);
             }
             return $cell;
@@ -260,15 +219,19 @@ var ListRenderer = BasicRenderer.extend({
      * @returns {jQueryElement} a <td> element
      */
     _renderBodyCell: function (record, node, colIndex, options) {
-        var tdClassName;
+        var tdClassName = 'o_data_cell';
         if (node.tag === 'button') {
-            tdClassName = 'o_list_button';
-        } else if (node.attrs.widget){
-            tdClassName = ('o_' + node.attrs.widget + '_cell');
+            tdClassName += ' o_list_button';
         } else {
-            tdClassName = FIELD_CLASSES[this.state.fields[node.attrs.name].type];
+            var typeClass = FIELD_CLASSES[this.state.fields[node.attrs.name].type];
+            if (typeClass) {
+                tdClassName += (' ' + typeClass);
+            }
+            if (node.attrs.widget) {
+                tdClassName += (' o_' + node.attrs.widget + '_cell');
+            }
         }
-        var $td = $('<td>', { class: tdClassName });
+        var $td = $('<td>', {class: tdClassName});
 
         // We register modifiers on the <td> element so that it gets the correct
         // modifiers classes (for styling)
@@ -284,15 +247,17 @@ var ListRenderer = BasicRenderer.extend({
             return $td.append(this._renderButton(record, node));
         }
         if (node.attrs.widget || (options && options.renderWidgets)) {
-            this.defs = []; // TODO maybe wait for those somewhere ?
             var widget = this._renderFieldWidget(node, record, _.pick(options, 'mode'));
-            delete this.defs;
             return $td.append(widget.$el);
         }
         var name = node.attrs.name;
         var field = this.state.fields[name];
         var value = record.data[name];
-        var formattedValue = field_utils.format[field.type](value, field, { data: record.data });
+        var formattedValue = field_utils.format[field.type](value, field, {
+            data: record.data,
+            escape: true,
+            isPassword: 'password' in node.attrs,
+        });
         return $td.html(formattedValue);
     },
     /**
@@ -407,8 +372,7 @@ var ListRenderer = BasicRenderer.extend({
         if (this.hasSelectors) {
             $cells.unshift($('<td>'));
         }
-        var field = this.state.fields[group.groupedBy[0]];
-        var name = this._formatValue(group.value, field);
+        var name = group.value === undefined ? _t('Undefined') : group.value;
         var $th = $('<th>')
                     .addClass('o_group_name')
                     .text(name + ' (' + group.count + ')');
@@ -550,18 +514,20 @@ var ListRenderer = BasicRenderer.extend({
      * @returns {jQueryElement} a <tr> element
      */
     _renderRow: function (record) {
-        var decorations = this._computeDecorationClassNames(record);
         var self = this;
+        this.defs = []; // TODO maybe wait for those somewhere ?
         var $cells = _.map(this.columns, function (node, index) {
             return self._renderBodyCell(record, node, index, {mode: 'readonly'});
         });
-        var $tr = $('<tr class="o_data_row">')
+        delete this.defs;
+
+        var $tr = $('<tr/>', {class: 'o_data_row'})
                     .data('id', record.id)
-                    .addClass(decorations.length && decorations.join(' '))
                     .append($cells);
         if (this.hasSelectors) {
             $tr.prepend(this._renderSelector('td'));
         }
+        this._setDecorationClasses(record, $tr);
         return $tr;
     },
     /**
@@ -631,6 +597,24 @@ var ListRenderer = BasicRenderer.extend({
             $checked_rows.find('.o_list_record_selector input').prop('checked', true);
         }
         return this._super();
+    },
+    /**
+     * Each line can be decorated according to a few simple rules. The arch
+     * description of the list may have one of the decoration-X attribute with
+     * a domain as value.  Then, for each record, we check if the domain matches
+     * the record, and add the text-X css class to the element.  This method is
+     * concerned with the computation of the list of css classes for a given
+     * record.
+     *
+     * @private
+     * @param {Object} record a basic model record
+     * @param {jQueryElement} $tr a jquery <tr> element (the row to add decoration)
+     */
+    _setDecorationClasses: function (record, $tr) {
+        _.each(this.rowDecorations, function (expr, decoration) {
+            var cssClass = decoration.replace('decoration', 'text');
+            $tr.toggleClass(cssClass, py.PY_isTrue(py.evaluate(expr, record.evalContext)));
+        });
     },
     /**
      * Whenever we change the state of the selected rows, we need to call this

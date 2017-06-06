@@ -7,24 +7,22 @@ WSGI stack, common code.
 
 """
 
-import httplib
-import urllib
-import xmlrpclib
-import StringIO
-
-import errno
 import logging
-import platform
-import socket
 import sys
 import threading
 import traceback
+
+try:
+    from xmlrpc import client as xmlrpclib
+except ImportError:
+    # pylint: disable=bad-python3-import
+    import xmlrpclib
 
 import werkzeug.serving
 import werkzeug.contrib.fixers
 
 import odoo
-import odoo.tools.config as config
+from odoo.tools import config
 
 _logger = logging.getLogger(__name__)
 
@@ -87,17 +85,12 @@ def xmlrpc_handle_exception_int(e):
         fault = xmlrpclib.Fault(RPC_FAULT_CODE_APPLICATION_ERROR, formatted_info)
         response = xmlrpclib.dumps(fault, allow_none=False, encoding=None)
     else:
-        if hasattr(e, 'message') and e.message == 'AccessDenied': # legacy
-            fault = xmlrpclib.Fault(RPC_FAULT_CODE_ACCESS_DENIED, str(e))
-            response = xmlrpclib.dumps(fault, allow_none=False, encoding=None)
-        #InternalError
-        else:
-            info = sys.exc_info()
-            # Which one is the best ?
-            formatted_info = "".join(traceback.format_exception(*info))
-            #formatted_info = odoo.tools.exception_to_unicode(e) + '\n' + info
-            fault = xmlrpclib.Fault(RPC_FAULT_CODE_APPLICATION_ERROR, formatted_info)
-            response = xmlrpclib.dumps(fault, allow_none=None, encoding=None)
+        info = sys.exc_info()
+        # Which one is the best ?
+        formatted_info = "".join(traceback.format_exception(*info))
+        #formatted_info = odoo.tools.exception_to_unicode(e) + '\n' + info
+        fault = xmlrpclib.Fault(RPC_FAULT_CODE_APPLICATION_ERROR, formatted_info)
+        response = xmlrpclib.dumps(fault, allow_none=None, encoding=None)
     return response
 
 def xmlrpc_handle_exception_string(e):
@@ -118,7 +111,7 @@ def xmlrpc_handle_exception_string(e):
     elif isinstance(e, odoo.exceptions.DeferredException):
         info = e.traceback
         formatted_info = "".join(traceback.format_exception(*info))
-        fault = xmlrpclib.Fault(odoo.tools.ustr(e.message), formatted_info)
+        fault = xmlrpclib.Fault(odoo.tools.ustr(e), formatted_info)
         response = xmlrpclib.dumps(fault, allow_none=False, encoding=None)
     #InternalError
     else:

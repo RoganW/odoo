@@ -10,7 +10,7 @@ from odoo.tools.float_utils import float_is_zero, float_compare
 from odoo.exceptions import UserError, AccessError
 from odoo.tools.misc import formatLang
 from odoo.addons.base.res.res_partner import WARNING_MESSAGE, WARNING_HELP
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 
 
 class PurchaseOrder(models.Model):
@@ -307,7 +307,7 @@ class PurchaseOrder(models.Model):
 
     @api.multi
     def print_quotation(self):
-        return self.env['report'].get_action(self, 'purchase.report_purchasequotation')
+        return self.env.ref('purchase.report_purchase_quotation').report_action(self)
 
     @api.multi
     def button_approve(self, force=False):
@@ -455,7 +455,7 @@ class PurchaseOrder(models.Model):
         pick_ids = sum([order.picking_ids.ids for order in self], [])
         #choose the view_mode accordingly
         if len(pick_ids) > 1:
-            result['domain'] = "[('id','in',[" + ','.join(map(str, pick_ids)) + "])]"
+            result['domain'] = "[('id','in',[" + ','.join(str(id) for id in pick_ids) + "])]"
         elif len(pick_ids) == 1:
             res = self.env.ref('stock.view_picking_form', False)
             result['views'] = [(res and res.id or False, 'form')]
@@ -579,6 +579,11 @@ class PurchaseOrderLine(models.Model):
                         msg += _("Billed Quantity") + ": %s <br/></li>" % (line.qty_invoiced,)
                     msg += "</ul>"
                     order.message_post(body=msg)
+        # Update expected date of corresponding moves
+        if 'date_planned' in values:
+            self.env['stock.move'].search([
+                ('purchase_line_id', 'in', self.ids), ('state', '!=', 'done')
+            ]).write({'date_expected': values['date_planned']})
         result = super(PurchaseOrderLine, self).write(values)
         if orders:
             orders._create_picking()
@@ -711,10 +716,10 @@ class PurchaseOrderLine(models.Model):
            PO Lines that correspond to the given product.seller_ids,
            when ordered at `date_order_str`.
 
-           :param browse_record | False product: product.product, used to
-               determine delivery delay thanks to the selected seller field (if False, default delay = 0)
-           :param browse_record | False po: purchase.order, necessary only if
-               the PO line is not yet attached to a PO.
+           :param Model seller: used to fetch the delivery delay (if no seller
+                                is provided, the delay is 0)
+           :param Model po: purchase.order, necessary only if the PO line is 
+                            not yet attached to a PO.
            :rtype: datetime
            :return: desired Schedule Date for the PO line
         """
@@ -987,6 +992,21 @@ class ProcurementOrder(models.Model):
         """
         return suppliers[0]
 
+    def _make_po_get_domain(self, partner):
+        gpo = self.rule_id.group_propagation_option
+        group = (gpo == 'fixed' and self.rule_id.group_id) or \
+                (gpo == 'propagate' and self.group_id) or False
+
+        domain = (
+            ('partner_id', '=', partner.id),
+            ('state', '=', 'draft'),
+            ('picking_type_id', '=', self.rule_id.picking_type_id.id),
+            ('company_id', '=', self.company_id.id),
+            ('dest_address_id', '=', self.partner_dest_id.id))
+        if group:
+            domain += (('group_id', '=', group.id),)
+        return domain
+
     @api.multi
     def make_po(self):
         cache = {}
@@ -1000,18 +1020,7 @@ class ProcurementOrder(models.Model):
             supplier = procurement._make_po_select_supplier(suppliers)
             partner = supplier.name
 
-            gpo = procurement.rule_id.group_propagation_option
-            group = (gpo == 'fixed' and procurement.rule_id.group_id) or \
-                    (gpo == 'propagate' and procurement.group_id) or False
-
-            domain = (
-                ('partner_id', '=', partner.id),
-                ('state', '=', 'draft'),
-                ('picking_type_id', '=', procurement.rule_id.picking_type_id.id),
-                ('company_id', '=', procurement.company_id.id),
-                ('dest_address_id', '=', procurement.partner_dest_id.id))
-            if group:
-                domain += (('group_id', '=', group.id),)
+            domain = procurement._make_po_get_domain(partner)
 
             if domain in cache:
                 po = cache[domain]
@@ -1100,7 +1109,7 @@ class ProductTemplate(models.Model):
     purchase_method = fields.Selection([
         ('purchase', 'On ordered quantities'),
         ('receive', 'On received quantities'),
-        ], string="Control Purchase Bills",
+        ], string="Control Policy",
         help="On ordered quantities: control bills based on ordered quantities.\n"
         "On received quantities: control bills based on received quantity.", default="receive")
     route_ids = fields.Many2many(default=lambda self: self._get_buy_route())

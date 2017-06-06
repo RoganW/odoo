@@ -2,7 +2,9 @@
 <templates id="template" xml:space="preserve">
 
 <div t-name="EmptyComponent"/>
+
 <div t-name="Loading" class="o_loading"/>
+
 <t t-name="Notification">
     <div t-attf-class="o_notification #{className}" t-translation="off">
         <a t-if="widget.sticky" class="fa fa-times o_close" href="#"/>
@@ -49,15 +51,15 @@
         <table class="o_group o_inner_group o_label_nowrap">
             <tr>
                 <td class="o_td_label"><label for="old_pwd" class="o_form_label">Old Password</label></td>
-                <td width="100%"><input type="password" class="o_form_field o_form_input" name="old_pwd" minlength="1" autofocus="autofocus" autocomplete="current-password"/></td>
+                <td width="100%"><input type="password" class="o_field_widget o_input" name="old_pwd" minlength="1" autofocus="autofocus" autocomplete="current-password"/></td>
             </tr>
             <tr>
                 <td class="o_td_label"><label for="new_password" class="o_form_label">New Password</label></td>
-                <td width="100%"><input type="password" class="o_form_field o_form_input" name="new_password" minlength="1" autocomplete="new-password"/></td>
+                <td width="100%"><input type="password" class="o_field_widget o_input" name="new_password" minlength="1" autocomplete="new-password"/></td>
             </tr>
             <tr>
                 <td class="o_td_label"><label for="confirm_pwd" class="o_form_label">Confirm New Password</label></td>
-                <td width="100%"><input type="password" class="o_form_field o_form_input" name="confirm_pwd" minlength="1" autocomplete="new-password"/></td>
+                <td width="100%"><input type="password" class="o_field_widget o_input" name="confirm_pwd" minlength="1" autocomplete="new-password"/></td>
             </tr>
         </table>
 
@@ -83,7 +85,6 @@
         </div>
     </div>
 </t>
-
 <t t-name="X2ManyControlPanel">
     <div class="o_x2m_control_panel">
         <div class="o_cp_buttons"/>
@@ -95,6 +96,7 @@
     <t t-foreach="views" t-as="view">
         <button type="button" t-att-accesskey="view.accesskey"
             t-attf-class="btn btn-icon fa fa-lg #{view.icon} o_cp_switch_#{view.type}"
+            t-att-aria-label="view.type"
             t-att-data-view-type="view.type" t-att-title="view.label"/>
     </t>
 </t>
@@ -108,7 +110,6 @@
         <ul class="dropdown-menu o_debug_dropdown" role="menu"/>
     </li>
 </t>
-
 <t t-name="WebClient.DebugManager.Global">
     <li><a href="#" data-action="perform_js_tests">Run JS Tests</a></li>
     <li><a href="#" data-action="select_view">Open View</a></li>
@@ -241,12 +242,12 @@
                 </li>
                 <li t-if="section.name == 'files' and widget.options.editable" class="o_sidebar_add_attachment">
                     <t t-call="HiddenInputFile">
-                        <t t-set="fileupload_id" t-value="widget.fileupload_id"/>
+                        <t t-set="fileupload_id" t-value="widget.fileuploadId"/>
                         <t t-set="fileupload_action" t-translation="off">/web/binary/upload_attachment</t>
                         <t t-set="multi_upload" t-value="true"/>
-                        <input type="hidden" name="model" t-att-value="widget.dataset and widget.dataset.model"/>
-                        <input type="hidden" name="id" t-att-value="widget.model_id"/>
-                        <input type="hidden" name="session_id" t-att-value="widget.session.session_id" t-if="widget.session.override_session"/>
+                        <input type="hidden" name="model" t-att-value="widget.env and widget.env.model"/>
+                        <input type="hidden" name="id" t-att-value="widget.env.activeIds[0]"/>
+                        <input type="hidden" name="session_id" t-att-value="widget.getSession().session_id" t-if="widget.getSession().override_session"/>
                         <span>Add...</span>
                     </t>
                 </li>
@@ -254,48 +255,6 @@
         </div>
     </t>
 </t>
-
-<t t-name="TreeView">
-    <select t-if="toolbar" style="width: 30%"/>
-    <table class="o_treeview_table">
-        <thead>
-            <tr>
-                <th t-foreach="fields_view" t-as="field"
-                    t-if="!field.attrs.modifiers.tree_invisible"
-                    class="treeview-header">
-                    <t t-esc="field_value.attrs.string || fields[field.attrs.name].string" />
-                </th>
-            </tr>
-        </thead>
-        <tbody>
-        </tbody>
-    </table>
-</t>
-<tr t-name="TreeView.rows"
-        t-foreach="records" t-as="record"
-        t-att-id="'treerow_' + record.id"
-        t-att-data-id="record.id" t-att-data-level="level + 1"
-        t-att-data-row-parent-id="row_parent_id">
-    <t t-set="children" t-value="record[children_field]"/>
-    <t t-set="class" t-value="children and children.length ? 'treeview-tr' : 'treeview-td'"/>
-    <t t-set="rank" t-value="'o_treeview_first'"/>
-    <t t-set="style" t-value="'background-position: ' + 19*(level) + 'px; padding-left: ' + (4 + 19*(level)) + 'px;'"/>
-
-    <td t-foreach="fields_view" t-as="field"
-        t-if="!field.attrs.modifiers.tree_invisible"
-        t-att-data-id="record.id"
-        t-att-style="color_for(record) + style "
-        t-attf-class="#{class} #{rank} #{(fields[field.attrs.name].type === 'float') or (fields[field.attrs.name].type === 'integer') or (fields[field.attrs.name].type === 'monetary')? 'oe_number' : ''}">
-
-        <span t-if="!field.attrs.modifiers.invisible" >
-            <t t-esc="render(record[field.attrs.name], fields[field.attrs.name])" />
-        </span>
-
-        <t t-set="class" t-value="'treeview-td'"/>
-        <t t-set="rank" t-value="''"/>
-        <t t-set="style" t-value="''"/>
-    </td>
-</tr>
 
 <div t-name="ListView" class="table-responsive">
     <table class="o_list_view table table-condensed table-striped">
@@ -332,7 +291,6 @@
         </tfoot>
     </table>
 </div>
-
 <t t-name="ListView.buttons">
     <div class="o_list_buttons">
         <t t-if="widget.is_action_enabled('create')">
@@ -347,60 +305,6 @@
             Discard
         </button>
     </div>
-</t>
-
-<t t-name="ListView.rows" t-foreach="records.length" t-as="index">
-    <t t-call="ListView.row">
-        <t t-set="record" t-value="records.at(index)"/>
-    </t>
-</t>
-
-<tr t-name="ListView.row"
-        t-att-data-id="record.get('id')"
-        t-attf-style="#{(view.fonts || view.colors) ? view.style_for(record) : ''}"
-        t-attf-class="#{view.compute_decoration_classnames(record)}">
-    <t t-set="asData" t-value="record.toForm().data"/>
-    <t t-foreach="columns" t-as="column">
-        <td t-if="column.meta"> </td>
-    </t>
-    <td t-if="options.selectable" class="o_list_record_selector">
-        <t t-set="checked" t-value="options.select_view_id == record.get('id') ? 'checked' : null"/>
-        <input t-if="options.radio" type="radio" name="radiogroup" t-att-checked="checked"/>
-        <div t-if="!options.radio" class="o_checkbox">
-            <input type="checkbox" name="radiogroup" t-att-checked="checked"/><span/>
-        </div>
-    </td>
-    <t t-foreach="columns" t-as="column">
-        <t t-set="number" t-value="column.type === 'integer' or column.type == 'float' or column.type == 'monetary'"/>
-        <t t-set="text" t-value="column.type === 'text'"/>
-        <t t-set="modifiers" t-value="column.modifiers_for(asData)"/>
-        <td t-if="!column.meta and column.invisible !== '1'" t-att-title="column.help"
-            t-attf-class="#{modifiers.readonly ? 'o_readonly' : ''} #{number ? 'o_list_number' : ''} #{text ? 'o_list_text' : ''} #{column.id === 'sequence' ? 'o_handle_cell' : ''} #{column.tag === 'button' ? 'o_list_button' : ''}"
-            t-att-data-field="column.id"
-            ><t t-raw="render_cell(record, column)"/></td>
-    </t>
-    <td t-if="options.deletable" class='o_list_record_delete'>
-        <span name="delete" class="fa fa-trash-o"/>
-    </td>
-</tr>
-
-<button t-name="ListView.row.text_button" type="button"
-        t-att-title="widget.string" t-att-disabled="disabled || undefined"
-        t-att-class="disabled ? 'oe_list_button_disabled btn_txt oe_link' : 'btn_txt oe_link'"
-        ><t t-esc="widget.string"/></button>
-<button t-name="ListView.row.button" type="button"
-        t-att-title="widget.string" t-att-disabled="disabled || undefined"
-        t-attf-class="o_icon_button #{disabled ? 'oe_list_button_disabled' : ''}"
-        ><i t-attf-class="fa #{widget.icon}" t-att-title="widget.string"/>
-</button>
-<t t-extend="ListView.row">
-    <!-- adds back padding to row being rendered after edition, if necessary
-         (if not deletable add back padding), otherwise the row being added is
-         missing columns
-     -->
-    <t t-jquery="&gt; :last" t-operation="after">
-        <td t-if="edited and !options.deletable" class="oe-listview-padding"/>
-    </t>
 </t>
 
 <t t-name="FormView.buttons">
@@ -546,7 +450,6 @@
         <button class="btn btn-default fa fa-pie-chart o_graph_button" title="Pie Chart" data-mode="pie"/>
     </div>
 </t>
-
 <div t-name="GraphView.error" class="oe_view_nocontent" >
     <p><strong><t t-esc="title"/></strong></p>
     <p><t t-esc="description"/></p>
@@ -555,7 +458,6 @@
 <div t-name="PivotView" class="o_pivot">
     <div class="o_field_selection"/>
 </div>
-
 <t t-name="PivotView.buttons">
     <div class="btn-group btn-group-sm" role="group">
         <button class="btn btn-primary btn-sm dropdown-toggle" data-toggle="dropdown">
@@ -575,7 +477,6 @@
         <button class="btn btn-default fa fa-download o_pivot_download" title="Download xls"/>
     </div>
 </t>
-
 <t t-name="PivotView.FieldSelection">
     <ul class="dropdown-menu o_pivot_field_menu" role="menu">
         <t t-foreach="fields" t-as="field">
@@ -601,7 +502,6 @@
         </t>
     </ul>
 </t>
-
 <div t-name="PivotView.nodata" class="oe_view_nocontent" >
     <p><strong>No data to display.</strong></p>
     <p>
@@ -610,23 +510,9 @@
     </p>
 </div>
 
-
 <t t-name="Widget">
     Unhandled widget
     <t t-js="dict">console.warn('Unhandled widget', dict.widget);</t>
-</t>
-<t t-name="FieldChar">
-    <span t-if="widget.get('effective_readonly')"/>
-
-    <input t-if="!widget.get('effective_readonly')" class="o_form_input"
-        t-att-barcode_events="widget.options.barcode_events"
-        t-att-type="widget.password ? 'password' : 'text'"
-        t-att-id="widget.idForLabel"
-        t-att-tabindex="widget.node.attrs.tabindex"
-        t-att-autofocus="widget.node.attrs.autofocus"
-        t-att-placeholder="widget.node.attrs.placeholder"
-        t-att-autocomplete="widget.password ? 'new-password' : widget.node.attrs.autocomplete"
-        t-att-maxlength="widget.field.size"/>
 </t>
 <t t-name="FormSelection">
     <div class="btn-group o_selection">
@@ -643,29 +529,8 @@
         </a>
     </li>
 </t>
-<t t-name="FieldEmail" t-extend="FieldChar">
-    <t t-jquery="span" t-operation="replace">
-        <t t-if="widget.get('effective_readonly')">
-            <a t-if="widget.clickable" class="o_form_uri o_text_overflow" href="#" target="_blank"/>
-            <span t-if="!widget.clickable" class="o_text_overflow"/>
-        </t>
-    </t>
-</t>
-<t t-name="FieldText">
-    <span t-if="widget.get('effective_readonly')" class="o_form_textarea"/>
-
-    <textarea t-if="!widget.get('effective_readonly')"
-        class="o_form_textarea"
-        rows="6"
-        t-att-name="widget.name"
-        t-att-tabindex="widget.node.attrs.tabindex"
-        t-att-autofocus="widget.node.attrs.autofocus"
-        t-att-placeholder="!widget.get('effective_readonly') ? widget.node.attrs.placeholder : ''"
-        t-att-maxlength="widget.field.size"/>
-</t>
-
 <t t-name="FieldDomain.content">
-    <div t-if="hasModel" class="o_form_field_domain_panel">
+    <div t-if="hasModel" class="o_field_domain_panel">
         <i class="fa fa-arrow-right"/>
 
         <button t-if="isValid" class="btn btn-xs btn-default o_domain_show_selection_button" type="button">
@@ -673,11 +538,10 @@
         </button>
         <span t-else="" class="text-warning"><i class="fa fa-exclamation-triangle"/> Invalid domain</span>
 
-        <button t-if="inDialogEdit" class="btn btn-xs btn-primary o_form_field_domain_dialog_button">Edit domain</button>
+        <button t-if="inDialogEdit" class="btn btn-xs btn-primary o_field_domain_dialog_button">Edit domain</button>
     </div>
     <div t-else="">Select a model to add a filter.</div>
 </t>
-
 <t t-name="DomainNode.ControlPanel">
     <div t-if="!widget.readonly &amp;&amp; !widget.noControlPanel" class="o_domain_node_control_panel">
         <button class="btn o_domain_delete_node_button"><i class="fa fa-times"/></button>
@@ -740,7 +604,7 @@
     <div t-if="!widget.readonly" class="o_domain_leaf_edition">
         <!-- field selector will be instantiated here -->
         <div> <!-- used for flex stretching -->
-            <select class="o_domain_leaf_operator_select">
+            <select class="o_domain_leaf_operator_select o_input">
                 <option t-foreach="widget.operators" t-as="key"
                         t-att-value="key"
                         t-att-selected="widget.displayOperator === key ? 'selected' : None">
@@ -750,7 +614,7 @@
         </div>
         <div t-attf-class="o_ds_value_cell#{_.contains(['set', 'not set'], widget.displayOperator) ? ' hidden' : ''}">
             <t t-if="widget.selectionChoices !== null">
-                <select class="o_domain_leaf_value_input">
+                <select class="o_domain_leaf_value_input o_input">
                     <option t-foreach="widget.selectionChoices" t-as="val"
                             t-att-value="val[0]"
                             t-att-selected="_.contains(val, widget.displayValue) ? 'selected' : None">
@@ -766,12 +630,12 @@
                         </span>
                     </div>
                     <div class="o_domain_leaf_value_tags">
-                        <input placeholder="Add new value" type="text"/>
+                        <input placeholder="Add new value" type="text" class="o_input"/>
                         <button class="btn btn-xs btn-primary fa fa-plus o_domain_leaf_value_add_tag_button"/>
                     </div>
                 </t>
                 <t t-else="">
-                    <input class="o_domain_leaf_value_input" type="text" t-att-value="widget.displayValue"/>
+                    <input class="o_domain_leaf_value_input o_input" type="text" t-att-value="widget.displayValue"/>
                 </t>
             </t>
         </div>
@@ -800,8 +664,7 @@
         </t>
     </div>
 </div>
-
-<div t-name="ModelFieldSelector" t-attf-class="o_field_selector#{!widget.options.readonly ? ' o_edit_mode' : ''}">
+<div t-name="ModelFieldSelector" t-attf-class="o_field_selector#{!widget.options.readonly ? ' o_edit_mode o_input' : ''}">
     <div class="o_field_selector_value" tabindex="0"/>
     <div class="o_field_selector_controls" tabindex="0">
         <i class="fa fa-exclamation-triangle o_field_selector_warning hidden" title="Invalid field chain"/>
@@ -816,7 +679,7 @@
             <ul class="o_field_selector_page"/>
         </div>
         <div t-if="widget.options.debugMode" class="o_field_selector_popover_footer">
-            <input type="text"/>
+            <input type="text" class="o_input"/>
         </div>
     </div>
 </div>
@@ -842,12 +705,11 @@
         </li>
     </t>
 </ul>
-
 <t t-name="web.datepicker">
     <t t-set="placeholder" t-value="widget.getParent().node and widget.getParent().node.attrs.placeholder"/>
     <div class="o_datepicker">
         <input type="text"
-            class="o_datepicker_input"
+            class="o_datepicker_input o_input"
             t-att-name="widget.name"
             t-att-placeholder="placeholder"/>
         <span class="o_datepicker_button"/>
@@ -857,7 +719,7 @@
     <span t-if="widget.mode === 'readonly'"/>
 
     <select t-if="widget.mode !== 'readonly'"
-        class="o_form_input"
+        class="o_input"
         t-att-name="widget.name"
         t-att-tabindex="widget.attrs.tabindex"
         t-att-autofocus="widget.attrs.autofocus"
@@ -866,9 +728,10 @@
 <t t-name="FieldRadio">
     <span t-if="widget.mode === 'readonly'"/>
 
-    <div t-if="widget.mode !== 'readonly'" t-attf-class="o_form_field_radio #{widget.nodeOptions.horizontal ? 'o_horizontal' : 'o_vertical'}">
+    <div t-if="widget.mode !== 'readonly'" t-attf-class="o_field_radio #{widget.nodeOptions.horizontal ? 'o_horizontal' : 'o_vertical'}">
         <div t-foreach="widget.values" t-as="value" class="o_radio_item">
-            <input type="radio" class="o_form_radio" t-att-id="widget.unique_id + '_' + value[0]" t-att-name="widget.unique_id" t-att-data-value="value[0]"/>
+            <input type="radio" class="o_radio_input" t-att-id="widget.unique_id + '_' + value[0]"
+                   t-att-name="widget.unique_id" t-att-data-value="value[0]" t-att-data-index="value_index"/>
             <label t-if="!widget.nodeOptions.no_radiolabel" class="o_form_label" t-att-for="widget.unique_id + '_' + value[0]"><t t-esc="value[1]"/></label>
         </div>
     </div>
@@ -878,9 +741,9 @@
         <a t-if="!widget.nodeOptions.no_open" class="o_form_uri" href="#"/>
         <span t-if="widget.nodeOptions.no_open"/>
     </t>
-    <div t-if="widget.mode === 'edit'" class="o_form_field o_form_field_many2one">
-        <div class="o_form_input_dropdown">
-            <input type="text" class="o_form_input"
+    <div t-if="widget.mode === 'edit'" class="o_field_widget o_field_many2one">
+        <div class="o_input_dropdown">
+            <input type="text" class="o_input"
                 t-att-barcode_events="widget.nodeOptions.barcode_events"
                 t-att-tabindex="widget.attrs.tabindex"
                 t-att-autofocus="widget.attrs.autofocus"
@@ -890,9 +753,6 @@
         </div>
         <button type="button" t-if="!widget.nodeOptions.no_open" class="fa fa-external-link btn btn-default o_external_button" tabindex="-1" draggable="false"/>
     </div>
-</t>
-<t t-name="Many2OneButton.cell">
-    <i t-attf-class="fa #{widget.icon}" t-att-title="widget.string"/>
 </t>
 <t t-name="FieldMany2ManyTag">
     <t t-foreach="elements" t-as="el">
@@ -915,19 +775,6 @@
         </li>
     </ul>
 </t>
-<t t-name="FieldBoolean">
-    <div class="o_checkbox o_form_field_boolean">
-        <input type="checkbox"
-            t-att-id="widget.idForLabel"
-            t-att-name="widget.name"
-            t-att-tabindex="widget.node.attrs.tabindex"
-            t-att-autofocus="widget.node.attrs.autofocus"/>
-        <span/>
-    </div>
-</t>
-<div t-name="FieldUpgradeBoolean" class="o_form_field o_form_field_boolean">
-    <t t-call="FieldBoolean"/>
-</div>
 <t t-name="ProgressBar">
     <div class="o_progressbar">
         <div t-if="widget.title" class="o_progressbar_title"><t t-esc="widget.title"/></div><div class="o_progress">
@@ -936,7 +783,7 @@
     </div>
 </t>
 <t t-name="FieldPercentPie">
-    <div class="o_form_field_percent_pie">
+    <div class="o_field_percent_pie">
         <div class="o_pie">
             <div class="o_mask"/>
             <div class="o_mask"/>
@@ -945,7 +792,7 @@
         <span t-if="widget.string"><t t-esc="widget.string"/></span>
     </div>
 </t>
-<t t-name="FieldStatus.content.desktop">
+<t t-name="FieldStatus.content">
     <t t-if="selection_folded.length">
         <ul class="dropdown-menu o-status-more" role="menu">
             <li t-foreach="selection_folded" t-as="i">
@@ -958,16 +805,6 @@
         <t t-call="FieldStatus.content.button"/>
     </t>
 </t>
-<t t-name="FieldStatus.content.mobile">
-    <button type="button" class="btn btn-sm btn-primary dropdown-toggle" data-toggle="dropdown">
-        <t t-esc="value"/>
-    </button>
-    <ul class="dropdown-menu o-status-more" role="menu">
-        <li t-foreach="selection" t-as="i">
-            <t t-call="FieldStatus.content.button"/>
-        </li>
-    </ul>
-</t>
 <t t-name="FieldStatus.content.button">
     <t t-set="disabled" t-value="!clickable || i.selected"/>
     <button type="button" t-att-data-value="i.id" t-att-disabled="disabled ? 'disabled' : undefined"
@@ -976,7 +813,7 @@
     </button>
 </t>
 <t t-name="FieldBinaryImage">
-    <div class="o_form_field_image">
+    <div class="o_field_image">
         <t t-if="widget.mode !== 'readonly'">
             <div class="o_form_image_controls">
                 <span class="fa fa-pencil fa-lg pull-left o_select_file_button" title="Edit"/>
@@ -1007,8 +844,8 @@
 <t t-name="FieldBinaryFile">
     <a t-if="widget.mode === 'readonly'" href="javascript:void(0)" class="o_form_uri"/>
 
-    <div t-if="widget.mode !== 'readonly'" class="o_form_field_binary_file">
-        <input type="text" class="o_form_input"
+    <div t-if="widget.mode !== 'readonly'" class="o_field_binary_file">
+        <input type="text" class="o_input"
             readonly="readonly"
             t-att-name="widget.name"
             t-att-tabindex="widget.attrs.tabindex"
@@ -1032,8 +869,8 @@
             <input type="hidden" name="csrf_token" t-att-value="csrf_token"/>
             <input type="hidden" name="session_id" value="" t-if="widget.getSession().override_session"/>
             <input type="hidden" name="callback" t-att-value="fileupload_id"/>
-            <input t-if="widget.image_only" type="file" class="o_form_input_file" name="ufile" accept="image/*"/>
-            <input t-else="1" type="file" class="o_form_input_file" name="ufile" t-att="{'multiple': multi_upload ? 'multiple' : null}"/>
+            <input t-if="widget.image_only" type="file" class="o_input_file" name="ufile" accept="image/*"/>
+            <input t-if="!widget.image_only" type="file" class="o_input_file" name="ufile" t-att="{'multiple': multi_upload ? 'multiple' : null}"/>
             <t t-raw="0"/>
         </form>
         <iframe t-att-id="fileupload_id" t-att-name="fileupload_id" style="display: none"/>
@@ -1099,7 +936,6 @@
 <t t-name="SearchView.autocomplete">
     <ul class="dropdown-menu o_searchview_autocomplete" role="menu"></ul>
 </t>
-
 <div t-name="SearchView.FilterMenu" class="btn-group o_dropdown">
     <button class="o_dropdown_toggler_btn btn btn-sm dropdown-toggle" data-toggle="dropdown">
         <span class="fa fa-filter"/> Filters <span class="caret"/>
@@ -1208,7 +1044,6 @@
         </option>
     </select>
 </t>
-
 <div t-name="SearchView.GroupByMenu" class="btn-group hidden-xs o_dropdown">
     <button class="o_dropdown_toggler_btn btn btn-sm dropdown-toggle" data-toggle="dropdown">
         <span class="fa fa-bars"/> Group By <span class="caret"/>
@@ -1230,7 +1065,6 @@
         <button type="button" class="btn btn-primary btn-sm o_add_group o_select_group">Apply</button>
     </li>
 </t>
-
 <div t-name="SearchView.FavoriteMenu" class="btn-group o_dropdown">
     <button class="o_dropdown_toggler_btn btn btn-sm dropdown-toggle" data-toggle="dropdown">
         <span class="fa fa-star"/> Favorites <span class="caret"/>
@@ -1341,50 +1175,29 @@
 <t t-name="M2ODialog">
     <div>
         <p/>
-        Name: <input class="oe_form_m2o_input_name" type="text"/>
+        Name: <input class="o_input" type="text"/>
     </div>
-</t>
-<t t-name="FieldMonetary" t-extend="FieldChar">
-    <t t-jquery="input">
-        var $div = $(document.createElement('div')).attr('t-if', this.attr('t-if')).addClass('o_form_field_monetary');
-        this.clone(true).appendTo($div);
-        this.replaceWith($div);
-    </t>
 </t>
 <t t-name="FieldMany2ManyCheckBoxes">
     <div>
         <div t-foreach="widget.m2mValues" t-as="m2m_value">
+            <t t-set="id_for_label" t-value="'o_many2many_checkbox_' + _.uniqueId()"/>
             <div class="o_checkbox">
-                <input type="checkbox" t-att-data-record-id="JSON.stringify(m2m_value[0])"/>
+                <input type="checkbox" t-att-id="id_for_label" t-att-data-record-id="JSON.stringify(m2m_value[0])"/>
                 <span/>
             </div>
-            <label class="o_form_label"><t t-esc="m2m_value[1]"/></label>
+            <label t-att-for="id_for_label" class="o_form_label"><t t-esc="m2m_value[1]"/></label>
         </div>
     </div>
-</t>
-<t t-name="X2ManyCounter">
-    <a href="javascript:void(0)"><t t-esc="text"/></a>
 </t>
 <t t-name="StatInfo">
     <span class="o_stat_value"><t t-esc="value"/></span>
     <span class="o_stat_text"><t t-esc="text"/></span>
 </t>
-
 <t t-name="toggle_button">
     <button type="button" class="o_icon_button" t-att-title="widget.string">
         <i t-attf-class="fa #{widget.icon}" t-att-title="widget.string"/>
     </button>
-</t>
-
-<t t-name="BooleanButton">
-    <t t-if="widget.get_value()">
-        <span class="o_stat_text o_not_hover text-success"><t t-esc="widget.string_true"/></span>
-        <span class="o_stat_text o_hover text-danger"><t t-esc="widget.hover_true"/></span>
-    </t>
-    <t t-if="!widget.get_value()">
-        <span class="o_stat_text o_not_hover text-danger"><t t-esc="widget.string_false"/></span>
-        <span class="o_stat_text o_hover text-success"><t t-esc="widget.hover_false"/></span>
-    </t>
 </t>
 
 <div t-name="Pager">
@@ -1409,7 +1222,7 @@
 </t>
 
 <t t-name="notification-box">
-    <div t-att-class="'alert alert-dismissible alert-' + type" role="alert">
+    <div t-attf-class="o_notification_box alert alert-dismissible alert-{{type}}" role="alert">
         <button type="button" class="close" data-dismiss="alert" aria-label="Close">
             <span aria-hidden="true" class="fa fa-times"></span>
         </button>

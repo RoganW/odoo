@@ -26,32 +26,97 @@ var view_dialogs = require('web.view_dialogs');
 var qweb = core.qweb;
 var _t = core._t;
 
-var DebouncedField = AbstractField.extend({
-    events: _.extend({}, AbstractField.prototype.events, {
-        'input': '_onInput',
-        'change': '_onChange',
-    }),
+var TranslatableFieldMixin = {
+    //--------------------------------------------------------------------------
+    // Private
+    //--------------------------------------------------------------------------
+
     /**
-     * for field widgets that may have a large number of field changes quickly,
+     * @private
+     * @returns {jQuery}
+     */
+    _renderTranslateButton: function () {
+        if (_t.database.multi_lang && this.field.translate && this.res_id) {
+            return $('<button>', {
+                    type: 'button',
+                    'class': 'o_field_translate fa fa-globe btn btn-link',
+                })
+                .on('click', this._onTranslate.bind(this));
+        }
+        return $();
+    },
+
+    //--------------------------------------------------------------------------
+    // Handlers
+    //--------------------------------------------------------------------------
+
+    /**
+     * open the translation view for the current field
+     *
+     * @private
+     */
+    _onTranslate: function () {
+        this.trigger_up('translate', {fieldName: this.name, id: this.dataPointID});
+    },
+};
+
+var DebouncedField = AbstractField.extend({
+    /**
+     * For field widgets that may have a large number of field changes quickly,
      * it could be a good idea to debounce the changes. In that case, this is
      * the suggested value.
      */
     DEBOUNCE: 1000,
 
     /**
-     * Override init to debounce the input changes to make sure they are not
-     * done too quickly.  Note that this is done here and not on the prototype,
-     * so each inputfield has its own debounced function to work with.
-     * Also, if the debounce value is set to 0, no debouncing is done, which is
-     * really useful for the unit tests.
+     * Override init to debounce the field "_doAction" method (by creating a new
+     * one called "_doDebouncedAction"). By default, this method notifies the
+     * current value of the field and we do not want that to happen for each
+     * keystroke. Note that this is done here and not on the prototype, so that
+     * each DebouncedField has its own debounced function to work with. Also, if
+     * the debounce value is set to 0, no debouncing is done, which is really
+     * useful for the unit tests.
      *
+     * @constructor
      * @override
      */
     init: function () {
         this._super.apply(this, arguments);
 
-        if (this.DEBOUNCE && this.mode === 'edit') {
-            this._doDebouncedAction = _.debounce(this._doDebouncedAction.bind(this), this.DEBOUNCE);
+        // _isDirty is used to detect that the user interacted at least
+        // once with the widget, so that we can prevent it from triggering a
+        // field_changed in commitChanges if the user didn't change anything
+        this._isDirty = false;
+        if (this.mode === 'edit') {
+            if (this.DEBOUNCE) {
+                this._doDebouncedAction = _.debounce(this._doAction, this.DEBOUNCE);
+            } else {
+                this._doDebouncedAction = this._doAction;
+            }
+
+            var self = this;
+            var debouncedFunction = this._doDebouncedAction;
+            this._doDebouncedAction = function () {
+                self._isDirty = true;
+                debouncedFunction.apply(self, arguments);
+            };
+        }
+    },
+
+    //--------------------------------------------------------------------------
+    // Public
+    //--------------------------------------------------------------------------
+
+    /**
+     * This field main action is debounced and might sets the field's value.
+     * When the changes are asked to be commited, the debounced action has to
+     * be done immediately.
+     *
+     * @override
+     */
+    commitChanges: function () {
+        if (this._isDirty && this.mode === 'edit') {
+            this._doAction();
         }
     },
 
@@ -60,6 +125,22 @@ var DebouncedField = AbstractField.extend({
     //--------------------------------------------------------------------------
 
     /**
+     * By default, notifies the outside world of the new value (checked from the
+     * DOM). This method has an automatically-created (@see init) associated
+     * debounced version called _doDebouncedAction.
+     *
+     * @private
+     */
+    _doAction: function () {
+        // as _doAction may be debounced, it may happen that it is called after
+        // the widget has been destroyed, and in this case, we don't want it to
+        // do anything (commitChanges ensures that if it has local changes, they
+        // are triggered up before the widget is destroyed, if necessary).
+        if (!this.isDestroyed()) {
+            this._setValue(this._getValue());
+        }
+    },
+    /**
      * Should return the current value of the field, in the DOM (for example,
      * the content of the input)
      *
@@ -67,51 +148,24 @@ var DebouncedField = AbstractField.extend({
      * @private
      * @returns {*}
      */
-    _getValue: function () {
-    },
-    /**
-     * Notifies the outside world of the new value (checked from the DOM).
-     * This method is debounced so that onchanges are not triggered too quickly.
-     *
-     * @private
-     */
-    _doDebouncedAction: function () {
-        this._setValue(this._getValue());
-    },
-
-    //--------------------------------------------------------------------------
-    // Handlers
-    //--------------------------------------------------------------------------
-
-    /**
-     * We immediately notify the outside world when this field confirms its
-     * changes.
-     *
-     * @private
-     */
-    _onChange: function () {
-        this._setValue(this._getValue());
-    },
-    /**
-     * Called when the user is typing text -> By default this only calls a
-     * debounced method to notify the outside world of the changes.
-     * @see _doDebouncedAction
-     *
-     * @private
-     */
-    _onInput: function () {
-        this._doDebouncedAction();
-    },
+    _getValue: function () {},
 });
 
 var InputField = DebouncedField.extend({
+    events: _.extend({}, DebouncedField.prototype.events, {
+        'input': '_onInput',
+        'change': '_onChange',
+    }),
+
     /**
-     * The very purpose of this field is to be an input tag in edit mode.
+     * Prepares the rendering so that it creates an element the user can type
+     * text into in edit mode.
      *
      * @override
      */
     init: function () {
         this._super.apply(this, arguments);
+        this.nodeOptions.isPassword = 'password' in this.attrs;
         if (this.mode === 'edit') {
             this.tagName = 'input';
         }
@@ -167,17 +221,15 @@ var InputField = DebouncedField.extend({
      */
     _prepareInput: function ($input) {
         this.$input = $input || $("<input/>");
-        this.$input.addClass('o_form_input');
+        this.$input.addClass('o_input');
         this.$input.attr({
-            type: 'text',
+            type: this.nodeOptions.isPassword ? 'password' : 'text',
             placeholder: this.attrs.placeholder || "",
+            autocomplete: this.nodeOptions.isPassword ?
+                'new-password' :
+                this.attrs.autocomplete,
         });
-        // Save cursor position to restore it after updating value
-        var selectionStart = this.$input[0].selectionStart;
-        var selectionEnd = this.$input[0].selectionEnd;
         this.$input.val(this._formatValue(this.value));
-        this.$input[0].selectionStart = selectionStart;
-        this.$input[0].selectionEnd = selectionEnd;
         return this.$input;
     },
     /**
@@ -198,7 +250,7 @@ var InputField = DebouncedField.extend({
      * @private
      */
     _renderReadonly: function () {
-        this.$el.html(this._formatValue(this.value));
+        this.$el.text(this._formatValue(this.value));
     },
 
     //--------------------------------------------------------------------------
@@ -206,50 +258,66 @@ var InputField = DebouncedField.extend({
     //--------------------------------------------------------------------------
 
     /**
-     * Implement keyboard movements.  Mostly useful for its environment, such
-     * as a list view.
+     * We immediately notify the outside world when this field confirms its
+     * changes.
      *
-     * @override
      * @private
-     * @param {any} event
      */
-    _onKeydown: function (event) {
-        var input = this.$input[0];
-        var is_not_selecting;
-        switch (event.which) {
-            case $.ui.keyCode.DOWN:
-                this.trigger_up('move_down');
-                break;
-            case $.ui.keyCode.UP:
-                this.trigger_up('move_up');
-                break;
-            case $.ui.keyCode.LEFT:
-                is_not_selecting = input.selectionEnd === input.selectionStart;
-                if (is_not_selecting && input.selectionStart === 0) {
-                    this.trigger_up('move_left');
-                }
-                break;
-            case $.ui.keyCode.RIGHT:
-                is_not_selecting = input.selectionEnd === input.selectionStart;
-                if (is_not_selecting && input.selectionEnd === input.value.length) {
-                    this.trigger_up('move_right');
-                }
-                break;
-            case $.ui.keyCode.ENTER:
-                this.trigger_up('move_next_line');
-                break;
-        }
+    _onChange: function () {
+        this._doAction();
+    },
+    /**
+     * Called when the user is typing text -> By default this only calls a
+     * debounced method to notify the outside world of the changes.
+     * @see _doDebouncedAction
+     *
+     * @private
+     */
+    _onInput: function () {
+        this._doDebouncedAction();
+    },
+    /**
+     * Stops the left/right navigation move event if the cursor is not at the
+     * start/end of the input element.
+     *
+     * @private
+     * @param {OdooEvent} ev
+     */
+    _onNavigationMove: function (ev) {
         this._super.apply(this, arguments);
+        var input = this.$input[0];
+        var selecting = (input.selectionEnd !== input.selectionStart);
+        if ((ev.data.direction === "left" && (selecting || input.selectionStart !== 0))
+         || (ev.data.direction === "right" && (selecting || input.selectionStart !== input.value.length))) {
+            ev.stopPropagation();
+        }
     },
 });
 
-var FieldChar = InputField.extend({
-    supportedFieldTypes: ['char'],
+var FieldChar = InputField.extend(TranslatableFieldMixin, {
+    className: 'o_field_char',
     tagName: 'span',
+    supportedFieldTypes: ['char'],
+
+    //--------------------------------------------------------------------------
+    // Private
+    //--------------------------------------------------------------------------
+
+    /**
+     * Add translation button
+     *
+     * @override
+     * @private
+     */
+    _renderEdit: function () {
+        var def = this._super.apply(this, arguments);
+        this.$el = this.$el.add(this._renderTranslateButton());
+        return def;
+    },
 });
 
 var FieldDate = InputField.extend({
-    className: "o_form_field_date",
+    className: "o_field_date",
     tagName: "span",
     supportedFieldTypes: ['date'],
 
@@ -264,7 +332,7 @@ var FieldDate = InputField.extend({
         if (this.mode === 'edit') {
             this.datewidget = this._makeDatePicker();
             this.datewidget.on('datetime_changed', this, function () {
-                var value = this._getDateWidgetValue();
+                var value = this._getValue();
                 if ((!value && this.value) || (value && !value.isSame(this.value))) {
                     this._setValue(value);
                 }
@@ -287,7 +355,7 @@ var FieldDate = InputField.extend({
      * @private
      */
     _doDebouncedAction: function () {
-        this.datewidget.change_datetime();
+        this.datewidget.changeDatetime();
     },
 
     /**
@@ -295,10 +363,20 @@ var FieldDate = InputField.extend({
      *
      * @private
      */
-    _getDateWidgetValue: function () {
-        return this.datewidget.get_value();
+    _getValue: function () {
+        return this.datewidget.getValue();
     },
-
+    /**
+     * @override
+     * @private
+     * @param {Moment|false} value
+     */
+    _isSameValue: function (value) {
+        if (value === false) {
+            return this.value === false;
+        }
+        return value.isSame(this.value);
+    },
     /**
      * Instantiates a new DateWidget datepicker.
      *
@@ -315,7 +393,7 @@ var FieldDate = InputField.extend({
      * @private
      */
     _renderEdit: function () {
-        this.datewidget.set_value(this.value);
+        this.datewidget.setValue(this.value);
         this.$input = this.datewidget.$input;
     },
 
@@ -343,8 +421,8 @@ var FieldDateTime = FieldDate.extend({
      *
      * @private
      */
-    _getDateWidgetValue: function () {
-        var value = this.datewidget.get_value();
+    _getValue: function () {
+        var value = this.datewidget.getValue();
         return value && value.add(-this.getSession().tzOffset, 'minutes');
     },
 
@@ -367,7 +445,7 @@ var FieldDateTime = FieldDate.extend({
      */
     _renderEdit: function () {
         var value = this.value && this.value.clone().add(this.getSession().tzOffset, 'minutes');
-        this.datewidget.set_value(value);
+        this.datewidget.setValue(value);
         this.$input = this.datewidget.$input;
     },
 
@@ -384,7 +462,8 @@ var FieldDateTime = FieldDate.extend({
 });
 
 var FieldMonetary = InputField.extend({
-    className: 'o_form_field_monetary o_list_number',
+    className: 'o_field_monetary o_field_number',
+    tagName: 'span',
     supportedFieldTypes: ['float', 'monetary'],
     resetOnAnyFieldChange: true, // Have to listen to currency changes
 
@@ -409,6 +488,7 @@ var FieldMonetary = InputField.extend({
 
         if (this.mode === 'edit' && this.currency) {
             this.tagName = 'div';
+            this.className += ' o_input';
         }
     },
 
@@ -454,6 +534,13 @@ var FieldMonetary = InputField.extend({
         }
     },
     /**
+     * @override
+     * @private
+     */
+    _renderReadonly: function () {
+        this.$el.html(this._formatValue(this.value));
+    },
+    /**
      * Re-gets the currency as its value may have changed.
      * @see FieldMonetary.resetOnAnyFieldChange
      *
@@ -471,7 +558,7 @@ var FieldMonetary = InputField.extend({
      * @private
      */
     _setCurrency: function () {
-        var currencyField = this.attrs.currency_field || this.field.currency_field || 'currency_id';
+        var currencyField = this.nodeOptions.currency_field || this.field.currency_field || 'currency_id';
         var currencyID = this.record.data[currencyField] && this.record.data[currencyField].res_id;
         this.currency = session.get_currency(currencyID);
     },
@@ -505,6 +592,23 @@ var FieldBoolean = AbstractField.extend({
     //--------------------------------------------------------------------------
 
     /**
+     * Toggle the checkbox if it is activated due to a click on itself.
+     *
+     * @override
+     */
+    activate: function (options) {
+        var activated = this._super.apply(this, arguments);
+        // The formatValue of boolean fields renders HTML elements similar to
+        // the one rendered by the widget itself. Even though the event might
+        // have been fired on the non-widget version of this field, we can still
+        // test the presence of its o_checkbox class.
+        if (activated && options && options.event && $(options.event.target).parents('.o_checkbox').length) {
+            this._setValue(!this.value);  // Toggle the checkbox
+        }
+        return activated;
+    },
+
+    /**
      * @override
      * @returns {jQuery} the focusable checkbox input
      */
@@ -519,6 +623,20 @@ var FieldBoolean = AbstractField.extend({
     isSet: function () {
         return true;
     },
+    /**
+     * When the checkbox is rerendered, we need to check if it was the actual
+     * origin of the reset. If it is, we need to activate it back so it looks
+     * like it was not rerendered but is still the same input.
+     *
+     * @override
+     */
+    reset: function (record, event) {
+        var rendered = this._super.apply(this, arguments);
+        if (event && event.target.name === this.name) {
+            this.activate();
+        }
+        return rendered;
+    },
 
     //--------------------------------------------------------------------------
     // Private
@@ -527,28 +645,18 @@ var FieldBoolean = AbstractField.extend({
     /**
      * The actual checkbox is designed in css to have full control over its
      * appearance, as opposed to letting the browser and the os decide how
-     * a checkbox should look. The actual input is disabled and hidden.
+     * a checkbox should look. The actual input is disabled and hidden. In
+     * readonly mode, the checkbox is disabled.
      *
      * @override
      * @private
      */
-    _renderReadonly: function () {
+    _render: function () {
         var $checkbox = this._formatValue(this.value);
         this.$input = $checkbox.find('input');
-        this.$el.empty().append($checkbox);
-    },
-
-    /**
-     * The actual checkbox is designed in css to have full control over its
-     * appearance, as opposed to letting the browser and the os decide how
-     * a checkbox should look. The actual input is hidden.
-     *
-     * @override
-     * @private
-     */
-    _renderEdit: function () {
-        this._renderReadonly();
-        this.$input.prop('disabled', false);
+        this.$input.prop('disabled', this.mode === 'readonly');
+        this.$el.addClass($checkbox.attr('class'));
+        this.$el.empty().append($checkbox.contents());
     },
 
     //--------------------------------------------------------------------------
@@ -564,39 +672,28 @@ var FieldBoolean = AbstractField.extend({
     _onChange: function () {
         this._setValue(this.$input[0].checked);
     },
-
     /**
      * Implement keyboard movements.  Mostly useful for its environment, such
      * as a list view.
      *
      * @override
      * @private
-     * @param {KeyEvent} event
+     * @param {KeyEvent} ev
      */
-    _onKeydown: function (event) {
-        this._super.apply(this, arguments);
-        switch (event.which) {
-            case $.ui.keyCode.DOWN:
-                this.trigger_up('move_down');
-                break;
-            case $.ui.keyCode.UP:
-                this.trigger_up('move_up');
-                break;
-            case $.ui.keyCode.LEFT:
-                this.trigger_up('move_left');
-                break;
-            case $.ui.keyCode.RIGHT:
-                this.trigger_up('move_right');
-                break;
+    _onKeydown: function (ev) {
+        switch (ev.which) {
             case $.ui.keyCode.ENTER:
                 this.$input.prop('checked', !this.value);
                 this._setValue(!this.value);
-                break;
+                return;
         }
+        this._super.apply(this, arguments);
     },
 });
 
 var FieldInteger = InputField.extend({
+    className: 'o_field_integer o_field_number',
+    tagName: 'span',
     supportedFieldTypes: ['integer'],
 
     //--------------------------------------------------------------------------
@@ -642,6 +739,8 @@ var FieldInteger = InputField.extend({
 });
 
 var FieldFloat = InputField.extend({
+    className: 'o_field_float o_field_number',
+    tagName: 'span',
     supportedFieldTypes: ['float'],
 
     /**
@@ -668,22 +767,6 @@ var FieldFloat = InputField.extend({
      */
     isSet: function () {
         return this.value === 0 || this._super.apply(this, arguments);
-    },
-
-    //--------------------------------------------------------------------------
-    // Private
-    //--------------------------------------------------------------------------
-
-    /**
-     * Format value according to precision parameter.
-     *
-     * @override
-     * @private
-     */
-    _renderReadonly: function () {
-        var value = this._formatValue(this.value);
-        var $span = $('<span>').addClass('o_form_field o_form_field_number').text(value);
-        this.$el.html($span);
     },
 });
 
@@ -715,73 +798,32 @@ var FieldFloatTime = FieldFloat.extend({
     },
 });
 
-var FieldText = DebouncedField.extend({
+var FieldText = InputField.extend(TranslatableFieldMixin, {
+    className: 'o_field_text',
     supportedFieldTypes: ['text'],
 
     /**
-     * In edit mode, the text widget contains a textarea. We append it in
-     * start() instead of _renderEdit() to keep the same textarea even
-     * if several _renderEdit are done. This allows to keep the cursor
-     * position and to autoresize only once.
+     * @constructor
+     */
+    init: function () {
+        this._super.apply(this, arguments);
+
+        if (this.mode === 'edit') {
+            this.tagName = 'textarea';
+        }
+    },
+    /**
+     * As it it done in the start function, the autoresize is done only once.
      *
      * @override
      */
     start: function () {
-        this.$el.addClass('o_list_text o_form_textarea');
-
         if (this.mode === 'edit') {
-            this.$textarea = $('<textarea>').appendTo(this.$el);
-            if (this.attrs.placeholder) {
-                this.$textarea.attr('placeholder', this.attrs.placeholder);
-            }
-            dom.autoresize(this.$textarea, {parent: this});
+            dom.autoresize(this.$el, {parent: this});
+
+            this.$el = this.$el.add(this._renderTranslateButton());
         }
-
         return this._super();
-    },
-
-    //--------------------------------------------------------------------------
-    // Public
-    //--------------------------------------------------------------------------
-
-    /**
-     * Returns the associated <textarea/> element.
-     *
-     * @override
-     */
-    getFocusableElement: function () {
-        return this.$textarea || $();
-    },
-
-    //--------------------------------------------------------------------------
-    // Private
-    //--------------------------------------------------------------------------
-
-    /**
-     * @override
-     * @returns {string} the content of the textarea
-     */
-    _getValue: function () {
-        return this.$textarea.val();
-    },
-    /**
-     * Format the value and put it in the textarea.
-     *
-     * @override
-     * @private
-     */
-    _renderEdit: function () {
-        this.$textarea.val(this._formatValue(this.value));
-    },
-
-    /**
-     * Format the value and display it.
-     *
-     * @override
-     * @private
-     */
-    _renderReadonly: function () {
-        this.$el.text(this._formatValue(this.value));
     },
 });
 
@@ -789,13 +831,14 @@ var FieldText = DebouncedField.extend({
  * Displays a handle to modify the sequence.
  */
 var HandleWidget = AbstractField.extend({
-    tagName: 'span',
     className: 'o_row_handle fa fa-arrows ui-sortable-handle',
+    tagName: 'span',
     description: "",
     supportedFieldTypes: ['integer'],
 });
 
-var EmailWidget = InputField.extend({
+var FieldEmail = InputField.extend({
+    className: 'o_field_email',
     prefix: 'mailto',
     supportedFieldTypes: ['char'],
 
@@ -826,7 +869,8 @@ var EmailWidget = InputField.extend({
     }
 });
 
-var FieldPhone = EmailWidget.extend({
+var FieldPhone = FieldEmail.extend({
+    className: 'o_field_phone',
     prefix: 'tel',
 
     /**
@@ -858,8 +902,11 @@ var FieldPhone = EmailWidget.extend({
     _renderReadonly: function () {
         this._super();
         if (this._canCall()) {
+            // Split phone number into two to prevent Skype app from finding it
             var text = this.$el.text();
-            this.$el.html(text.substr(0, text.length/2) + "&shy;" + text.substr(text.length/2)); // To prevent Skype app to find the phone number
+            var part1 = _.escape(text.substr(0, text.length/2));
+            var part2 = _.escape(text.substr(text.length/2));
+            this.$el.html(part1 + "&shy;" + part2);
         } else {
             this.$el.removeClass('o_form_uri');
         }
@@ -880,6 +927,7 @@ var FieldPhone = EmailWidget.extend({
 });
 
 var UrlWidget = InputField.extend({
+    className: 'o_field_url',
     supportedFieldTypes: ['char'],
 
     /**
@@ -912,9 +960,9 @@ var UrlWidget = InputField.extend({
 
 var AbstractFieldBinary = AbstractField.extend({
     events: _.extend({}, AbstractField.prototype.events, {
-        'change .o_form_input_file': 'on_file_change',
+        'change .o_input_file': 'on_file_change',
         'click .o_select_file_button': function () {
-            this.$('.o_form_input_file').click();
+            this.$('.o_input_file').click();
         },
         'click .o_clear_file_button': 'on_clear',
     }),
@@ -957,7 +1005,7 @@ var AbstractFieldBinary = AbstractField.extend({
                     self.on_file_uploaded(file.size, file.name, file.type, data);
                 };
             } else {
-                this.$('form.o_form_binary_form input[name=session_id]').val(this.session.session_id);
+                this.$('form.o_form_binary_form input[name=session_id]').val(this.getSession().session_id);
                 this.$('form.o_form_binary_form').submit();
             }
             this.$('.o_form_binary_progress').show();
@@ -1057,8 +1105,8 @@ var FieldBinaryFile = AbstractFieldBinary.extend({
                 this.on_save_as(event);
             }
         },
-        'click .o_form_input': function () { // eq[0]
-            this.$('.o_form_input_file').click();
+        'click .o_input': function () { // eq[0]
+            this.$('.o_input_file').click();
         },
     }),
     supportedFieldTypes: ['binary'],
@@ -1079,7 +1127,7 @@ var FieldBinaryFile = AbstractFieldBinary.extend({
         if (this.value) {
             this.$el.children().removeClass('o_hidden');
             this.$('.o_select_file_button').first().addClass('o_hidden');
-            this.$('.o_form_input').eq(0).val(this.filename_value || this.value);
+            this.$('.o_input').eq(0).val(this.filename_value || this.value);
         } else {
             this.$el.children().addClass('o_hidden');
             this.$('.o_select_file_button').first().removeClass('o_hidden');
@@ -1102,7 +1150,7 @@ var FieldBinaryFile = AbstractFieldBinary.extend({
             framework.blockUI();
             var c = crash_manager;
             var filename_fieldname = this.attrs.filename;
-            this.session.get_file({
+            this.getSession().get_file({
                 'url': '/web/content',
                 'data': {
                     'model': this.model,
@@ -1114,7 +1162,7 @@ var FieldBinaryFile = AbstractFieldBinary.extend({
                     'data': utils.is_bin_size(this.value) ? null : this.value,
                 },
                 'complete': framework.unblockUI,
-                'error': c.rpc_error.bind(c)
+                'error': c.rpc_error.bind(c),
             });
             ev.stopPropagation();
         }
@@ -1512,7 +1560,7 @@ var FieldPercentPie = AbstractField.extend({
         this.$leftMask.css({transform: leftDeg, msTransform: leftDeg, mozTransform: leftDeg, webkitTransform: leftDeg});
         this.$rightMask.css({transform: rightDeg, msTransform: rightDeg, mozTransform: rightDeg, webkitTransform: rightDeg});
 
-        this.$pieValue.html(Math.round(value) + '%');
+        this.$pieValue.text(Math.round(value) + '%');
     },
 });
 
@@ -1653,9 +1701,9 @@ var FieldProgressBar = AbstractField.extend({
 
         if (!this.write_mode) {
             if (max_value !== 100) {
-                this.$('.o_progressbar_value').html(utils.human_number(value) + " / " + utils.human_number(max_value));
+                this.$('.o_progressbar_value').text(utils.human_number(value) + " / " + utils.human_number(max_value));
             } else {
-                this.$('.o_progressbar_value').html(utils.human_number(value) + "%");
+                this.$('.o_progressbar_value').text(utils.human_number(value) + "%");
             }
         } else if (isNaN(v)) {
             this.$('.o_progressbar_value').val(this.edit_max_value ? max_value : value);
@@ -1700,8 +1748,8 @@ var FieldToggleBoolean = AbstractField.extend({
      * @private
      */
     _render: function () {
-        var class_name = this.value ? 'o_toggle_button_success' : 'text-muted';
-        this.$('i').attr('class', ('fa fa-circle ' + class_name));
+        var className = this.value ? 'o_toggle_button_success' : 'text-muted';
+        this.$('i').addClass('fa fa-circle ' + className);
         var title = this.value ? this.attrs.options.active : this.attrs.options.inactive;
         this.$el.attr('title', title);
     },
@@ -1720,7 +1768,6 @@ var FieldToggleBoolean = AbstractField.extend({
         event.stopPropagation();
         this._setValue(!this.value);
     },
-
 });
 
 var JournalDashboardGraph = AbstractField.extend({
@@ -1731,7 +1778,8 @@ var JournalDashboardGraph = AbstractField.extend({
         this.data = JSON.parse(this.value);
     },
     start: function () {
-        nv.utils.windowResize(this._onResize.bind(this));
+        this._onResize = this._onResize.bind(this);
+        nv.utils.windowResize(this._onResize);
         return this._super.apply(this, arguments);
     },
     destroy: function () {
@@ -1791,6 +1839,13 @@ var JournalDashboardGraph = AbstractField.extend({
                     });
                     self.chart.yAxis.tickFormat(d3.format(',.2f'));
 
+                    self.chart.tooltip.contentGenerator(function (key) {
+                        return qweb.render('GraphCustomTooltip', {
+                            'color': key.point.color,
+                            'key': self.data[0].key,
+                            'value': d3.format(',.2f')(key.point.y)
+                        });
+                    });
                     break;
 
                 case "bar":
@@ -1806,6 +1861,13 @@ var JournalDashboardGraph = AbstractField.extend({
                     self.chart.xAxis.axisLabel(self.data[0].title);
                     self.chart.yAxis.tickFormat(d3.format(',.2f'));
 
+                    self.chart.tooltip.contentGenerator(function (key) {
+                        return qweb.render('GraphCustomTooltip', {
+                            'color': key.color,
+                            'key': self.data[0].key,
+                            'value': d3.format(',.2f')(key.data.value)
+                        });
+                    });
                     break;
             }
             d3.select(self.$('svg')[0])
@@ -1850,12 +1912,12 @@ var FieldDomain = AbstractField.extend({
 
     events: _.extend({}, AbstractField.prototype.events, {
         "click .o_domain_show_selection_button": "_onShowSelectionButtonClick",
-        "click .o_form_field_domain_dialog_button": "_onDialogEditButtonClick",
+        "click .o_field_domain_dialog_button": "_onDialogEditButtonClick",
     }),
-    custom_events: {
+    custom_events: _.extend({}, AbstractField.prototype.custom_events, {
         "domain_changed": "_onDomainSelectorValueChange",
         "domain_selected": "_onDomainSelectorDialogValueChange",
-    },
+    }),
     /**
      * @constructor
      * @override init from AbstractField
@@ -1866,7 +1928,7 @@ var FieldDomain = AbstractField.extend({
         this.inDialog = !!this.nodeOptions.in_dialog;
         this.fsFilters = this.nodeOptions.fs_filters || {};
 
-        this.className = "o_form_field_domain";
+        this.className = "o_field_domain";
         if (this.mode === "edit") {
             this.className += " o_edit_mode";
         }
@@ -2141,15 +2203,15 @@ var AceEditor = DebouncedField.extend({
             useSoftTabs: true,
         });
         if (this.mode === "edit") {
-            this.aceEditor.on("change", this._onInput.bind(this));
-            this.aceEditor.on("blur", this._onChange.bind(this));
+            this.aceEditor.on("change", this._doDebouncedAction.bind(this));
+            this.aceEditor.on("blur", this._doAction.bind(this));
         }
     },
 });
 
 return {
     DebouncedField: DebouncedField,
-    EmailWidget: EmailWidget,
+    FieldEmail: FieldEmail,
     FieldBinaryFile: FieldBinaryFile,
     FieldBinaryImage: FieldBinaryImage,
     FieldBoolean: FieldBoolean,

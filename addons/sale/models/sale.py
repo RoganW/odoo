@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import uuid
+
 from itertools import groupby
 from datetime import datetime, timedelta
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
-from odoo.tools import float_is_zero, float_compare, DEFAULT_SERVER_DATETIME_FORMAT
+from odoo.tools import float_is_zero, float_compare, DEFAULT_SERVER_DATETIME_FORMAT, pycompat
 from odoo.tools.misc import formatLang
 
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 
 
 class SaleOrder(models.Model):
@@ -53,7 +55,7 @@ class SaleOrder(models.Model):
             # Search for invoices which have been 'cancelled' (filter_refund = 'modify' in
             # 'account.invoice.refund')
             # use like as origin may contains multiple references (e.g. 'SO01, SO02')
-            refunds = invoice_ids.search([('origin', 'like', order.name)])
+            refunds = invoice_ids.search([('origin', 'like', order.name)]).filtered(lambda r: r.type in ['out_invoice', 'out_refund'])
             invoice_ids |= refunds.filtered(lambda r: order.name in [origin.strip() for origin in r.origin.split(',')])
             # Search for refunds as well
             refund_ids = self.env['account.invoice'].browse()
@@ -83,6 +85,15 @@ class SaleOrder(models.Model):
             })
 
     @api.model
+    def get_empty_list_help(self, help):
+        if help:
+            return '<p class=''oe_view_nocontent_create''">%s</p>' % (help)
+        return super(SaleOrder, self).get_empty_list_help(help)
+
+    def _get_default_access_token(self):
+        return str(uuid.uuid4())
+
+    @api.model
     def _default_note(self):
         return self.env.user.company_id.sale_note
 
@@ -104,6 +115,9 @@ class SaleOrder(models.Model):
     name = fields.Char(string='Order Reference', required=True, copy=False, readonly=True, states={'draft': [('readonly', False)]}, index=True, default=lambda self: _('New'))
     origin = fields.Char(string='Source Document', help="Reference of the document that generated this sales order request.")
     client_order_ref = fields.Char(string='Customer Reference', copy=False)
+    access_token = fields.Char(
+        'Security Token', copy=False,
+        default=_get_default_access_token)
 
     state = fields.Selection([
         ('draft', 'Quotation'),
@@ -253,7 +267,10 @@ class SaleOrder(models.Model):
     @api.model
     def create(self, vals):
         if vals.get('name', _('New')) == _('New'):
-            vals['name'] = self.env['ir.sequence'].next_by_code('sale.order') or _('New')
+            if 'company_id' in vals:
+                vals['name'] = self.env['ir.sequence'].with_context(force_company=vals['company_id']).next_by_code('sale.order') or _('New')
+            else:
+                vals['name'] = self.env['ir.sequence'].next_by_code('sale.order') or _('New')
 
         # Makes sure partner_invoice_id', 'partner_shipping_id' and 'pricelist_id' are defined
         if any(f not in vals for f in ['partner_invoice_id', 'partner_shipping_id', 'pricelist_id']):
@@ -272,6 +289,20 @@ class SaleOrder(models.Model):
         if 'order_line' not in default:
             default['order_line'] = [(0, 0, line.copy_data()[0]) for line in self.order_line.filtered(lambda l: not l.is_downpayment)]
         return super(SaleOrder, self).copy_data(default)
+
+    @api.model_cr_context
+    def _init_column(self, column_name):
+        """ Initialize the value of the given column for existing rows.
+            Overridden here because we skip generating unique access tokens
+            for potentially tons of existing sale orders, should they be needed,
+            they will be generated on the fly.
+        """
+        if column_name != 'access_token':
+            super(SaleOrder, self)._init_column(column_name)
+
+    def _generate_access_token(self):
+        for order in self:
+            order.access_token = self._get_default_access_token()
 
     @api.multi
     def _prepare_invoice(self):
@@ -305,7 +336,7 @@ class SaleOrder(models.Model):
     @api.multi
     def print_quotation(self):
         self.filtered(lambda s: s.state == 'draft').write({'state': 'sent'})
-        return self.env['report'].get_action(self, 'sale.report_saleorder')
+        return self.env.ref('sale.action_report_saleorder').report_action(self)
 
     @api.multi
     def action_view_invoice(self):
@@ -362,7 +393,7 @@ class SaleOrder(models.Model):
         if not invoices:
             raise UserError(_('There is no invoicable line.'))
 
-        for invoice in invoices.values():
+        for invoice in pycompat.values(invoices):
             if not invoice.invoice_line_ids:
                 raise UserError(_('There is no invoicable line.'))
             # If invoice is negative, do a refund invoice instead
@@ -379,7 +410,7 @@ class SaleOrder(models.Model):
             invoice.message_post_with_view('mail.message_origin_link',
                 values={'self': invoice, 'origin': references[invoice]},
                 subtype_id=self.env.ref('mail.mt_note').id)
-        return [inv.id for inv in invoices.values()]
+        return [inv.id for inv in pycompat.values(invoices)]
 
     @api.multi
     def action_draft(self):
@@ -448,7 +479,6 @@ class SaleOrder(models.Model):
     def action_unlock(self):
         self.write({'state': 'sale'})
 
-    @api.multi
     def _prepare_procurement_group(self):
         return {'name': self.name}
 
@@ -506,7 +536,6 @@ class SaleOrder(models.Model):
     def _get_tax_amount_by_group(self):
         self.ensure_one()
         res = {}
-        currency = self.currency_id or self.company_id.currency_id
         for line in self.order_line:
             base_tax = 0
             for tax in line.tax_id:
@@ -518,8 +547,8 @@ class SaleOrder(models.Model):
                 if tax.include_base_amount:
                     base_tax += tax.compute_all(line.price_reduce + base_tax, quantity=1, product=line.product_id,
                                                 partner=self.partner_shipping_id)['taxes'][0]['amount']
-        res = sorted(res.items(), key=lambda l: l[0].sequence)
-        res = map(lambda l: (l[0].name, l[1]), res)
+        res = sorted(pycompat.items(res), key=lambda l: l[0].sequence)
+        res = [(l[0].name, l[1]) for l in res]
         return res
 
 
@@ -830,19 +859,19 @@ class SaleOrderLine(models.Model):
 
     @api.multi
     def invoice_line_create(self, invoice_id, qty):
+        """ Create an invoice line. The quantity to invoice can be positive (invoice) or negative (refund).
+            :param invoice_id: integer
+            :param qty: float quantity to invoice
+            :returns recordset of account.invoice.line created
         """
-        Create an invoice line. The quantity to invoice can be positive (invoice) or negative
-        (refund).
-
-        :param invoice_id: integer
-        :param qty: float quantity to invoice
-        """
+        invoice_lines = self.env['account.invoice.line']
         precision = self.env['decimal.precision'].precision_get('Product Unit of Measure')
         for line in self:
             if not float_is_zero(qty, precision_digits=precision):
                 vals = line._prepare_invoice_line(qty=qty)
                 vals.update({'invoice_id': invoice_id, 'sale_line_ids': [(6, 0, [line.id])]})
-                self.env['account.invoice.line'].create(vals)
+                invoice_lines |= self.env['account.invoice.line'].create(vals)
+        return invoice_lines
 
     @api.multi
     def _get_display_price(self, product):

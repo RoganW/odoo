@@ -4,6 +4,9 @@
 from __future__ import print_function
 import math
 
+from odoo.tools import pycompat
+
+
 def _float_check_precision(precision_digits=None, precision_rounding=None):
     assert (precision_digits is not None or precision_rounding is not None) and \
         not (precision_digits and precision_rounding),\
@@ -54,7 +57,7 @@ def float_round(value, precision_digits=None, precision_rounding=None, rounding_
     epsilon_magnitude = math.log(abs(normalized_value), 2)
     epsilon = 2**(epsilon_magnitude-53)
     if rounding_method == 'HALF-UP':
-        normalized_value += cmp(normalized_value,0) * epsilon
+        normalized_value += math.copysign(epsilon, normalized_value)
         rounded_value = round(normalized_value) # round to integer
 
     # TIE-BREAKING: UP (for ceiling operations)
@@ -66,7 +69,7 @@ def float_round(value, precision_digits=None, precision_rounding=None, rounding_
     # restored.
 
     elif rounding_method == 'UP':
-        sign = cmp(normalized_value, 0)
+        sign = math.copysign(1.0, normalized_value)
         normalized_value -= sign*epsilon
         rounded_value = math.ceil(abs(normalized_value))*sign # ceil to integer
 
@@ -177,24 +180,6 @@ def float_split(value, precision_digits):
     return int(units), int(cents)
 
 
-class float_precision(float):
-    """ A class for float values that carry precision digits. This is a thin
-        layer on top of ``float``, and the precision digits are not propagated
-        to the result of arithmetic operations. This class is used when
-        converting monetary values to cache, and for serializing them to the
-        database.
-    """
-    __slots__ = ['precision_digits']
-
-    def __new__(cls, value, precision_digits):
-        obj = super(float_precision, cls).__new__(cls, value)
-        obj.precision_digits = precision_digits
-        return obj
-
-    def float_repr(self):
-        return _float_repr(self, self.precision_digits)
-
-
 if __name__ == "__main__":
 
     import time
@@ -215,13 +200,12 @@ if __name__ == "__main__":
     expecteds = ['.00', '.02', '.01', '.68', '.67', '.46', '.456', '.4556']
     precisions = [2, 2, 2, 2, 2, 2, 3, 4]
     for magnitude in range(7):
-        for i in xrange(len(fractions)):
-            frac, exp, prec = fractions[i], expecteds[i], precisions[i]
+        for frac, exp, prec in pycompat.izip(fractions, expecteds, precisions):
             for sign in [-1,1]:
-                for x in xrange(0,10000,97):
+                for x in range(0, 10000, 97):
                     n = x * 10**magnitude
                     f = sign * (n + frac)
-                    f_exp = ('-' if f != 0 and sign == -1 else '') + str(n) + exp 
+                    f_exp = ('-' if f != 0 and sign == -1 else '') + str(n) + exp
                     try_round(f, f_exp, precision_digits=prec)
 
     stop = time.time()

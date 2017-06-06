@@ -86,8 +86,10 @@ class Project(models.Model):
             ])
 
     def _compute_task_count(self):
+        task_data = self.env['project.task'].read_group([('project_id', 'in', self.ids), '|', ('stage_id.fold', '=', False), ('stage_id', '=', False)], ['project_id'], ['project_id'])
+        result = dict((data['project_id'][0], data['project_id_count']) for data in task_data)
         for project in self:
-            project.task_count = len(project.task_ids)
+            project.task_count = result.get(project.id, 0)
 
     def _compute_task_needaction_count(self):
         projects_data = self.env['project.task'].read_group([
@@ -217,6 +219,8 @@ class Project(models.Model):
     doc_count = fields.Integer(compute='_compute_attached_docs_count', string="Number of documents attached")
     date_start = fields.Date(string='Start Date')
     date = fields.Date(string='Expiration Date', index=True, track_visibility='onchange')
+    subtask_project_id = fields.Many2one('project.project', string='Sub-task Project', ondelete="restrict",
+        help="Choosing a sub-tasks project will both enable sub-tasks and set their default project (possibly the project itself)")
 
     _sql_constraints = [
         ('project_date_greater', 'check(date >= date_start)', 'Error! project start-date must be lower than project end-date.')
@@ -254,6 +258,8 @@ class Project(models.Model):
         # Prevent double project creation when 'use_tasks' is checked
         self = self.with_context(project_creation_in_progress=True, mail_create_nosubscribe=True)
         project = super(Project, self).create(vals)
+        if not vals.get('subtask_project_id'):
+            project.subtask_project_id = project.id
         if project.privacy_visibility == 'portal' and project.partner_id:
             project.message_subscribe(project.partner_id.ids)
         return project
@@ -409,6 +415,10 @@ class Task(models.Model):
     legend_blocked = fields.Char(related='stage_id.legend_blocked', string='Kanban Blocked Explanation', readonly=True)
     legend_done = fields.Char(related='stage_id.legend_done', string='Kanban Valid Explanation', readonly=True)
     legend_normal = fields.Char(related='stage_id.legend_normal', string='Kanban Ongoing Explanation', readonly=True)
+    parent_id = fields.Many2one('project.task', string='Parent Task')
+    child_ids = fields.One2many('project.task', 'parent_id', string="Sub-tasks")
+    subtask_project_id = fields.Many2one('project.project', related="project_id.subtask_project_id", string='Sub-task Project', readonly=True)
+    subtask_count = fields.Integer(compute='_compute_subtask_count', type='integer', string="Sub-task count")
 
     @api.onchange('project_id')
     def _onchange_project(self):
@@ -435,6 +445,17 @@ class Task(models.Model):
         if 'remaining_hours' not in default:
             default['remaining_hours'] = self.planned_hours
         return super(Task, self).copy(default)
+
+    @api.multi
+    def _compute_subtask_count(self):
+        for task in self:
+            task.subtask_count = self.search_count([('id', 'child_of', task.id), ('id', '!=', task.id)])
+
+    @api.constrains('parent_id')
+    def _check_subtask_project(self):
+        for task in self:
+            if task.parent_id.project_id and task.project_id != task.parent_id.project_id.subtask_project_id:
+                raise UserError(_("You can't define a parent task if its project is not correctly configured. The sub-task's project of the parent task's project should be this task's project"))
 
     @api.constrains('date_start', 'date_end')
     def _check_dates(self):
@@ -612,7 +633,7 @@ class Task(models.Model):
         email_list = tools.email_split((msg.get('to') or '') + ',' + (msg.get('cc') or ''))
         # check left-part is not already an alias
         aliases = self.mapped('project_id.alias_name')
-        return filter(lambda x: x.split('@')[0] not in aliases, email_list)
+        return [x for x in email_list if x.split('@')[0] not in aliases]
 
     @api.model
     def message_new(self, msg, custom_values=None):
@@ -628,7 +649,7 @@ class Task(models.Model):
 
         task = super(Task, self).message_new(msg, custom_values=defaults)
         email_list = task.email_split(msg)
-        partner_ids = filter(None, task._find_partner_from_emails(email_list, force_create=False))
+        partner_ids = [p for p in task._find_partner_from_emails(email_list, force_create=False) if p]
         task.message_subscribe(partner_ids)
         return task
 
@@ -653,7 +674,7 @@ class Task(models.Model):
                         pass
 
         email_list = self.email_split(msg)
-        partner_ids = filter(None, self._find_partner_from_emails(email_list, force_create=False))
+        partner_ids = [p for p in self._find_partner_from_emails(email_list, force_create=False) if p]
         self.message_subscribe(partner_ids)
         return super(Task, self).message_update(msg, update_vals=update_vals)
 
@@ -675,13 +696,23 @@ class Task(models.Model):
             except Exception:
                 pass
         if self.project_id:
-            current_objects = filter(None, headers.get('X-Odoo-Objects', '').split(','))
+            current_objects = [h for h in headers.get('X-Odoo-Objects', '').split(',') if h]
             current_objects.insert(0, 'project.project-%s, ' % self.project_id.id)
             headers['X-Odoo-Objects'] = ','.join(current_objects)
         if self.tag_ids:
             headers['X-Odoo-Tags'] = ','.join(self.tag_ids.mapped('name'))
         res['headers'] = repr(headers)
         return res
+
+    def action_open_parent_task(self):
+        return {
+            'name': _('Parent Task'),
+            'view_type': 'form',
+            'view_mode': 'form',
+            'res_model': 'project.task',
+            'res_id': self.parent_id.id,
+            'type': 'ir.actions.act_window'
+        }
 
 
 class AccountAnalyticAccount(models.Model):

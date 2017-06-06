@@ -1,7 +1,13 @@
 #odoo.loggers.handlers. -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
-import ConfigParser
+try:
+    import configparser as ConfigParser
+    CP_kw = dict(interpolation=None)
+except ImportError:
+    import ConfigParser
+    CP_kw = dict()
+
 import optparse
 import os
 import sys
@@ -10,7 +16,8 @@ import odoo.conf
 import odoo.loglevels as loglevels
 import logging
 import odoo.release as release
-import appdirs
+from . import appdirs, pycompat
+
 
 class MyOption (optparse.Option, object):
     """ optparse Option with two additional attributes.
@@ -52,7 +59,7 @@ def _deduplicate_loggers(loggers):
     # there are no duplicates within the output sequence
     return (
         '{}:{}'.format(logger, level)
-        for logger, level in dict(it.split(':') for it in loggers).iteritems()
+        for logger, level in pycompat.items(dict(it.split(':') for it in loggers))
     )
 
 
@@ -450,10 +457,10 @@ class configmanager(object):
         self.options['demo'] = (dict(self.options['init'])
                                 if not self.options['without_demo'] else {})
         self.options['update'] = opt.update and dict.fromkeys(opt.update.split(','), 1) or {}
-        self.options['translate_modules'] = opt.translate_modules and map(lambda m: m.strip(), opt.translate_modules.split(',')) or ['all']
+        self.options['translate_modules'] = opt.translate_modules and [m.strip() for m in opt.translate_modules.split(',')] or ['all']
         self.options['translate_modules'].sort()
 
-        dev_split = opt.dev_mode and  map(str.strip, opt.dev_mode.split(',')) or []
+        dev_split = opt.dev_mode and  [s.strip() for s in opt.dev_mode.split(',')] or []
         self.options['dev_mode'] = 'all' in dev_split and dev_split + ['pdb', 'reload', 'qweb', 'werkzeug', 'xml'] or dev_split
 
         if opt.pg_path:
@@ -497,7 +504,7 @@ class configmanager(object):
         setattr(parser.values, option.dest, ",".join(ad_paths))
 
     def load(self):
-        p = ConfigParser.ConfigParser()
+        p = ConfigParser.ConfigParser(**CP_kw)
         try:
             p.read([self.rcfile])
             for (name,value) in p.items('options'):
@@ -523,10 +530,10 @@ class configmanager(object):
             pass
 
     def save(self):
-        p = ConfigParser.ConfigParser()
-        loglevelnames = dict(zip(self._LOGLEVELS.values(), self._LOGLEVELS.keys()))
+        p = ConfigParser.ConfigParser(**CP_kw)
+        loglevelnames = dict(pycompat.izip(pycompat.values(self._LOGLEVELS), pycompat.keys(self._LOGLEVELS)))
         p.add_section('options')
-        for opt in sorted(self.options.keys()):
+        for opt in sorted(pycompat.keys(self.options)):
             if opt in ('version', 'language', 'translate_out', 'translate_in', 'overwrite_existing_translations', 'init', 'update'):
                 continue
             if opt in self.blacklist_for_save:
@@ -538,9 +545,9 @@ class configmanager(object):
             else:
                 p.set('options', opt, self.options[opt])
 
-        for sec in sorted(self.misc.keys()):
+        for sec in sorted(pycompat.keys(self.misc)):
             p.add_section(sec)
-            for opt in sorted(self.misc[sec].keys()):
+            for opt in sorted(pycompat.keys(self.misc[sec])):
                 p.set(sec,opt,self.misc[sec][opt])
 
         # try to create the directories and write the file
@@ -549,7 +556,7 @@ class configmanager(object):
             if not rc_exists and not os.path.exists(os.path.dirname(self.rcfile)):
                 os.makedirs(os.path.dirname(self.rcfile))
             try:
-                p.write(file(self.rcfile, 'w'))
+                p.write(open(self.rcfile, 'w'))
                 if not rc_exists:
                     os.chmod(self.rcfile, 0o600)
             except IOError:

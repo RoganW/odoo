@@ -61,7 +61,7 @@ odoo.define('website_form.animation', function (require) {
             var self = this;
 
             self.$target.find('#o_website_form_result').empty();
-            if (!self.check_error_fields([])) {
+            if (!self.check_error_fields({})) {
                 self.update_status('invalid');
                 return false;
             }
@@ -115,7 +115,7 @@ odoo.define('website_form.animation', function (require) {
                 if(!result_data.id) {
                     // Failure, the server didn't return the created record ID
                     self.update_status('error');
-                    if (result_data.error_fields && result_data.error_fields.length) {
+                    if (result_data.error_fields) {
                         // If the server return a list of bad fields, show these fields for users
                         self.check_error_fields(result_data.error_fields);
                     }
@@ -167,19 +167,27 @@ odoo.define('website_form.animation', function (require) {
 
                     // Special cases for dates and datetimes
                     } else if ($(input).hasClass('o_website_form_date')) {
-                        return !self.is_datetime_valid(input.value, 'date');
+                        if (!self.is_datetime_valid(input.value, 'date')) {
+                            return true;
+                        }
                     } else if ($(input).hasClass('o_website_form_datetime')) {
-                        return !self.is_datetime_valid(input.value, 'datetime');
-
-                    } else {
-                        return !input.checkValidity();
+                        if (!self.is_datetime_valid(input.value, 'datetime')) {
+                            return true;
+                        }
                     }
+                    return !input.checkValidity();
                 })
 
                 // Update field color if invalid or erroneous
                 $field.removeClass('has-error');
-                if(invalid_inputs.length || error_fields.indexOf(field_name) >= 0){
+                if(invalid_inputs.length || error_fields[field_name]){
                     $field.addClass('has-error');
+                    if (_.isString(error_fields[field_name])){
+                        $field.popover({content: error_fields[field_name], trigger: 'hover', container: 'body', placement: 'top'});
+                        // update error message and show it.
+                        $field.data("bs.popover").options.content = error_fields[field_name];
+                        $field.popover('show');
+                    }
                     form_valid = false;
                 }
             });

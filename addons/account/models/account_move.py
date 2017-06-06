@@ -8,7 +8,7 @@ from odoo.exceptions import RedirectWarning, UserError, ValidationError
 from odoo.tools.misc import formatLang
 from odoo.tools import float_is_zero, float_compare
 from odoo.tools.safe_eval import safe_eval
-import odoo.addons.decimal_precision as dp
+from odoo.addons import decimal_precision as dp
 from lxml import etree
 
 #----------------------------------------------------------
@@ -148,7 +148,7 @@ class AccountMove(models.Model):
                         sequence = journal.sequence_id
                         if invoice and invoice.type in ['out_refund', 'in_refund'] and journal.refund_sequence:
                             if not journal.refund_sequence_id:
-                                raise UserError(_('Please define a sequence for the refunds'))
+                                raise UserError(_('Please define a sequence for the credit notes'))
                             sequence = journal.refund_sequence_id
                                                             
                         new_name = sequence.with_context(ir_sequence_date=move.date).next_by_id()
@@ -228,8 +228,8 @@ class AccountMove(models.Model):
             'date': date,
             'journal_id': journal_id.id if journal_id else self.journal_id.id,
             'ref': _('reversal of: ') + self.name})
-        for acm_line in reversed_move.line_ids:
-            acm_line.with_context(check_move_validity=False).write({
+        for acm_line in reversed_move.line_ids.with_context(check_move_validity=False):
+            acm_line.write({
                 'debit': acm_line.credit,
                 'credit': acm_line.debit,
                 'amount_currency': -acm_line.amount_currency
@@ -671,7 +671,7 @@ class AccountMoveLine(models.Model):
     def prepare_move_lines_for_reconciliation_widget(self, target_currency=False, target_date=False):
         """ Returns move lines formatted for the manual/bank reconciliation widget
 
-            :param target_currency: currency (browse_record or ID) you want the move line debit/credit converted into
+            :param target_currency: currency (Model or ID) you want the move line debit/credit converted into
             :param target_date: date to use for the monetary conversion
         """
         context = dict(self._context or {})
@@ -989,7 +989,7 @@ class AccountMoveLine(models.Model):
             second_line_dict['amount_currency'] = -second_line_dict['amount_currency']
 
         # Create the move
-        writeoff_move = self.env['account.move'].create({
+        writeoff_move = self.env['account.move'].with_context(apply_taxes=True).create({
             'journal_id': vals['journal_id'],
             'date': vals['date'],
             'state': 'draft',
@@ -1696,7 +1696,7 @@ class AccountPartialReconcile(models.Model):
                         total_amount_currency += aml.company_id.currency_id.with_context(date=aml.date).compute(aml.balance, partial_rec.currency_id)
                 for x in aml.matched_debit_ids | aml.matched_credit_ids:
                     partial_rec_set[x] = None
-        partial_rec_ids = [x.id for x in partial_rec_set.keys()]
+        partial_rec_ids = [x.id for x in partial_rec_set]
         aml_ids = aml_set.ids
         #then, if the total debit and credit are equal, or the total amount in currency is 0, the reconciliation is full
         digits_rounding_precision = aml_set[0].company_id.currency_id.rounding

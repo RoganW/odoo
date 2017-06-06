@@ -1,10 +1,15 @@
 odoo.define('mail.chatter_tests', function (require) {
 "use strict";
 
+var Composers = require('mail.composer');
+
 var Bus = require('web.Bus');
+var concurrency = require('web.concurrency');
 var FormView = require('web.FormView');
 var KanbanView = require('web.KanbanView');
 var testUtils = require('web.test_utils');
+
+var BasicComposer = Composers.BasicComposer;
 
 var createView = testUtils.createView;
 
@@ -196,7 +201,7 @@ QUnit.test('chatter is not rendered in mode === create', function (assert) {
     assert.strictEqual(form.$('.o_chatter').length, 0,
         "chatter should not be displayed");
 
-    form.$('.o_form_input').val('coucou').trigger('input');
+    form.$('.o_field_char').val('coucou').trigger('input');
     form.$buttons.find('.o_form_button_save').click();
 
     assert.strictEqual(form.$('.o_chatter').length, 1,
@@ -318,7 +323,12 @@ QUnit.test('kanban activity widget with an activity', function (assert) {
 });
 
 QUnit.test('chatter: post, receive and star messages', function (assert) {
-    assert.expect(22);
+    var done = assert.async();
+    assert.expect(27);
+
+    // Remove the mention throttle to speed up the test
+    var mentionThrottle = BasicComposer.prototype.MENTION_THROTTLE;
+    BasicComposer.prototype.MENTION_THROTTLE = 1;
 
     this.data.partner.records[0].message_ids = [1];
     var messages = [{
@@ -334,6 +344,7 @@ QUnit.test('chatter: post, receive and star messages', function (assert) {
         res_id: 2,
     }];
     var bus = new Bus();
+    var getSuggestionsDef = $.Deferred();
     var form = createView({
         View: FormView,
         model: 'partner',
@@ -348,8 +359,12 @@ QUnit.test('chatter: post, receive and star messages', function (assert) {
             '</form>',
         res_id: 2,
         mockRPC: function (route, args) {
-            if (route === "/web/dataset/call_kw/partner/message_get_suggested_recipients") {
+            if (args.method === 'message_get_suggested_recipients') {
                 return $.when({2: []});
+            }
+            if (args.method === 'get_mention_suggestions') {
+                getSuggestionsDef.resolve();
+                return $.when([{email: "test@odoo.com", id: 1, name: "Test User"}]);
             }
             return this._super(route, args);
         },
@@ -447,7 +462,35 @@ QUnit.test('chatter: post, receive and star messages', function (assert) {
     form.$('.o_thread_message[data-message-id=2] .o_thread_message_star').click();
     assert.ok(form.$('.o_thread_message[data-message-id=2] .o_thread_message_star.fa-star-o').length,
         "message 2 should not be starred");
-    form.destroy();
+
+    // very basic test of mention
+    form.$('.o_chatter_button_new_message').click();
+    var $input = form.$('.oe_chatter .o_composer_text_field:first()');
+    $input.val('@');
+    // the cursor position must be set for the mention manager to detect that we are mentionning
+    $input[0].selectionStart = 1;
+    $input[0].selectionEnd = 1;
+    $input.trigger('keyup');
+
+    assert.strictEqual(getSuggestionsDef.state(), "pending",
+        "the mention suggestion RPC should be throttled");
+
+    getSuggestionsDef
+        .then(concurrency.delay.bind(concurrency, 0))
+        .then(function () {
+            assert.strictEqual(form.$('.o_mention_proposition:visible').length, 1,
+                "there should be one mention suggestion");
+            assert.strictEqual(form.$('.o_mention_proposition').data('id'), 1,
+                "suggestion's id should be correct");
+            assert.strictEqual(form.$('.o_mention_proposition .o_mention_name').text(), 'Test User',
+                "suggestion should be displayed correctly");
+            assert.strictEqual(form.$('.o_mention_proposition .o_mention_info').text(), '(test@odoo.com)',
+                "suggestion should be displayed correctly");
+
+            BasicComposer.prototype.MENTION_THROTTLE = mentionThrottle;
+            form.destroy();
+            done();
+        });
 });
 
 QUnit.test('form activity widget: schedule next activity', function (assert) {
@@ -752,5 +795,72 @@ QUnit.test('followers widget: follow/unfollow, edit subtypes', function (assert)
 
     form.destroy();
 });
+
+QUnit.test('followers widget: do not display follower duplications', function (assert) {
+    assert.expect(2);
+
+    this.data.partner.records[0].message_follower_ids = [1];
+    var resID = 2;
+    var followers = [{
+        id: 1,
+        name: "Admin",
+        email: "admin@example.com",
+        res_id: resID,
+        res_model: 'partner',
+    }];
+    var def;
+    var form = createView({
+        View: FormView,
+        model: 'partner',
+        data: this.data,
+        arch: '<form>' +
+                '<sheet></sheet>' +
+                '<div class="oe_chatter">' +
+                    '<field name="message_follower_ids" widget="mail_followers"/>' +
+                '</div>' +
+            '</form>',
+        mockRPC: function (route, args) {
+            if (route === '/mail/read_followers') {
+                return $.when(def).then(function () {
+                    return {
+                        followers: _.filter(followers, function (follower) {
+                            return _.contains(args.follower_ids, follower.id);
+                        }),
+                        subtypes: [],
+                    };
+                });
+            }
+            return this._super.apply(this, arguments);
+        },
+        res_id: resID,
+        session: {partner_id: 1},
+    });
+
+
+    followers.push({
+        id: 2,
+        is_uid: false,
+        name: "A follower",
+        email: "follower@example.com",
+        res_id: resID,
+        res_model: 'partner',
+    });
+    this.data.partner.records[0].message_follower_ids.push(2);
+
+    // simulate concurrent calls to read_followers and check that those followers
+    // are not added twice in the dropdown
+    def = $.Deferred();
+    form.reload();
+    form.reload();
+    def.resolve();
+
+    assert.strictEqual(form.$('.o_followers_count').text(), '2',
+        "should have 2 followers");
+    assert.strictEqual(form.$('.o_followers_list .o_partner').length, 2,
+        "there should be 2 followers in the follower dropdown");
+
+    form.destroy();
+});
+
 });
 });

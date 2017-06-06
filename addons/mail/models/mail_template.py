@@ -7,14 +7,14 @@ import copy
 import datetime
 import dateutil.relativedelta as relativedelta
 import logging
-import lxml
-import urlparse
 
-from urllib import urlencode, quote as quote
+import functools
+import lxml
+from werkzeug import urls
 
 from odoo import _, api, fields, models, tools
-from odoo import report as odoo_report
 from odoo.exceptions import UserError
+from odoo.tools import pycompat
 
 _logger = logging.getLogger(__name__)
 
@@ -81,8 +81,8 @@ try:
     )
     mako_template_env.globals.update({
         'str': str,
-        'quote': quote,
-        'urlencode': urlencode,
+        'quote': urls.url_quote,
+        'urlencode': urls.url_encode,
         'datetime': datetime,
         'len': len,
         'abs': abs,
@@ -90,10 +90,9 @@ try:
         'max': max,
         'sum': sum,
         'filter': filter,
-        'reduce': reduce,
+        'reduce': functools.reduce,
         'map': map,
         'round': round,
-        'cmp': cmp,
 
         # dateutil.relativedelta is an old-style class and cannot be directly
         # instanciated wihtin a jinja2 expression, so a lambda "proxy" is
@@ -153,7 +152,7 @@ class MailTemplate(models.Model):
     report_name = fields.Char('Report Filename', translate=True,
                               help="Name to use for the generated report file (may contain placeholders)\n"
                                    "The extension can be omitted and will then come from the report type.")
-    report_template = fields.Many2one('ir.actions.report.xml', 'Optional report to print and attach')
+    report_template = fields.Many2one('ir.actions.report', 'Optional report to print and attach')
     ref_ir_act_window = fields.Many2one('ir.actions.act_window', 'Sidebar action', readonly=True, copy=False,
                                         help="Sidebar action to make this template available on records "
                                              "of the related document model")
@@ -296,14 +295,13 @@ class MailTemplate(models.Model):
             root = lxml.html.fromstring(html)
 
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url')
-        (base_scheme, base_netloc, bpath, bparams, bquery, bfragment) = urlparse.urlparse(base_url)
+        base = urls.url_parse(base_url)
 
         def _process_link(url):
-            new_url = url
-            (scheme, netloc, path, params, query, fragment) = urlparse.urlparse(url)
-            if not scheme and not netloc:
-                new_url = urlparse.urlunparse((base_scheme, base_netloc, path, params, query, fragment))
-            return new_url
+            new_url = urls.url_parse(url)
+            if new_url.scheme and new_url.netloc:
+                return url
+            return new_url.replace(scheme=base.scheme, netloc=base.netloc).to_url()
 
         # check all nodes, replace :
         # - img src -> check URL
@@ -331,7 +329,7 @@ class MailTemplate(models.Model):
         with the result of evaluating these expressions with an evaluation
         context containing:
 
-         - ``user``: browse_record of the current user
+         - ``user``: Model of the current user
          - ``object``: record of the document record this mail is related to
          - ``context``: the context passed to the mail composition wizard
 
@@ -340,7 +338,7 @@ class MailTemplate(models.Model):
         :param int res_ids: list of ids of document records those mails are related to.
         """
         multi_mode = True
-        if isinstance(res_ids, (int, long)):
+        if isinstance(res_ids, pycompat.integer_types):
             multi_mode = False
             res_ids = [res_ids]
 
@@ -355,7 +353,7 @@ class MailTemplate(models.Model):
             return multi_mode and results or results[res_ids[0]]
 
         # prepare template variables
-        records = self.env[model].browse(filter(None, res_ids))  # filter to avoid browsing [None]
+        records = self.env[model].browse(it for it in res_ids if it)  # filter to avoid browsing [None]
         res_to_rec = dict.fromkeys(res_ids, None)
         for record in records:
             res_to_rec[record.id] = record
@@ -365,7 +363,7 @@ class MailTemplate(models.Model):
             'user': self.env.user,
             'ctx': self._context,  # context kw would clash with mako internals
         }
-        for res_id, record in res_to_rec.iteritems():
+        for res_id, record in pycompat.items(res_to_rec):
             variables['object'] = record
             try:
                 render_result = template.render(variables)
@@ -377,7 +375,7 @@ class MailTemplate(models.Model):
             results[res_id] = render_result
 
         if post_process:
-            for res_id, result in results.iteritems():
+            for res_id, result in pycompat.items(results):
                 results[res_id] = self.render_post_process(result)
 
         return multi_mode and results or results[res_ids[0]]
@@ -385,7 +383,7 @@ class MailTemplate(models.Model):
     @api.multi
     def get_email_template(self, res_ids):
         multi_mode = True
-        if isinstance(res_ids, (int, long)):
+        if isinstance(res_ids, pycompat.integer_types):
             res_ids = [res_ids]
             multi_mode = False
 
@@ -398,7 +396,7 @@ class MailTemplate(models.Model):
         self.ensure_one()
 
         langs = self.render_template(self.lang, self.model, res_ids)
-        for res_id, lang in langs.iteritems():
+        for res_id, lang in pycompat.items(langs):
             if lang:
                 template = self.with_context(lang=lang)
             else:
@@ -417,11 +415,11 @@ class MailTemplate(models.Model):
 
         if self.use_default_to or self._context.get('tpl_force_default_to'):
             default_recipients = self.env['mail.thread'].message_get_default_recipients(res_model=self.model, res_ids=res_ids)
-            for res_id, recipients in default_recipients.iteritems():
+            for res_id, recipients in pycompat.items(default_recipients):
                 results[res_id].pop('partner_to', None)
                 results[res_id].update(recipients)
 
-        for res_id, values in results.iteritems():
+        for res_id, values in pycompat.items(results):
             partner_ids = values.get('partner_ids', list())
             if self._context.get('tpl_partners_only'):
                 mails = tools.email_split(values.pop('email_to', '')) + tools.email_split(values.pop('email_cc', ''))
@@ -450,7 +448,7 @@ class MailTemplate(models.Model):
         """
         self.ensure_one()
         multi_mode = True
-        if isinstance(res_ids, (int, long)):
+        if isinstance(res_ids, pycompat.integer_types):
             res_ids = [res_ids]
             multi_mode = False
         if fields is None:
@@ -460,11 +458,11 @@ class MailTemplate(models.Model):
 
         # templates: res_id -> template; template -> res_ids
         templates_to_res_ids = {}
-        for res_id, template in res_ids_to_templates.iteritems():
+        for res_id, template in pycompat.items(res_ids_to_templates):
             templates_to_res_ids.setdefault(template, []).append(res_id)
 
         results = dict()
-        for template, template_res_ids in templates_to_res_ids.iteritems():
+        for template, template_res_ids in pycompat.items(templates_to_res_ids):
             Template = self.env['mail.template']
             # generate fields value for all res_ids linked to the current template
             if template.lang:
@@ -474,7 +472,7 @@ class MailTemplate(models.Model):
                 generated_field_values = Template.render_template(
                     getattr(template, field), template.model, template_res_ids,
                     post_process=(field == 'body_html'))
-                for res_id, field_value in generated_field_values.iteritems():
+                for res_id, field_value in pycompat.items(generated_field_values):
                     results.setdefault(res_id, dict())[field] = field_value
             # compute recipients
             if any(field in fields for field in ['email_to', 'partner_to', 'email_cc']):
@@ -506,10 +504,9 @@ class MailTemplate(models.Model):
                     report = template.report_template
                     report_service = report.report_name
 
-                    if report.report_type in ['qweb-html', 'qweb-pdf']:
-                        result, format = Template.env['report'].get_pdf([res_id], report_service), 'pdf'
-                    else:
-                        result, format = odoo_report.render_report(self._cr, self._uid, [res_id], report_service, {'model': template.model}, Template._context)
+                    if report.report_type not in ['qweb-html', 'qweb-pdf']:
+                        raise UserError(_('Unsupported report type %s found.') % report.report_type)
+                    result, format = report.render_qweb_pdf([res_id])
 
                     # TODO in trunk, change return format to binary to match message_post expected format
                     result = base64.b64encode(result)
